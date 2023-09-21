@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import os
 
+from src import liftover
+
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
 
@@ -53,13 +55,14 @@ rule genetic_map_liftovers:
         input_bed_path = t2t_lifted_genetic_map_path / "male_{chrom}_input.bed",
         output_bed_path = t2t_lifted_genetic_map_path / "male_{chrom}_output.bed",
         output_unmapped_path = t2t_lifted_genetic_map_path / "male_{chrom}_unmapped",
+        output_map_path = t2t_lifted_genetic_map_path / "male_{chrom}_genetic_map.txt",
     run:
         # Prepare input bed file for liftover
         genetic_map = pd.read_csv(input.map_path, delim_whitespace=True)  
         (genetic_map            
             .assign(start_pos = np.concatenate([[0], genetic_map.pos.values[:-1]]))
             .assign(end_pos = genetic_map.pos.values)
-            [["chr", "start_pos", "end_pos"]]
+            [["chr", "start_pos", "end_pos", "start_pos", "end_pos"]]
             .to_csv(output.input_bed_path, sep="\t", index=False, header=False)
         )
 
@@ -70,11 +73,19 @@ rule genetic_map_liftovers:
             f"{hg19_to_t2t_overchain_file} "
             f"{output.output_bed_path} "
             f"{output.output_unmapped_path} "
-            f"-multiple "
+            f"-minMatch=0.1 "
         )
+
+        # Create the updated genetic maps
+        liftover.merge_genetic_map_and_liftover(
+            input.map_path,
+            output.output_bed_path,
+            output.output_map_path,
+        )
+
 
 rule genetic_map_liftovers_final:
     input:
-        [str(t2t_lifted_genetic_map_path / f"male_{chrom}_output.bed") \
+        [str(t2t_lifted_genetic_map_path / f"male_{chrom}_genetic_map.txt") \
             for chrom in aut_chrom_names
         ]
