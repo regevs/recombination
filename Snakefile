@@ -2,8 +2,9 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import os
+import subprocess
 
-from src import liftover
+from src import liftover, annotate
 
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
@@ -16,6 +17,26 @@ t2t_hapfusion_output_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sper
 hg19_hapfusion_output_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/01.grch37")
 denovo_hapfusion_output_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds")
 
+# Samples to do
+sample_ids = [
+    "PD50477f",
+    # "PD50508bf", -- ignore; merged two sampling dates just for phasing, but should be analyzed separately
+    "PD50519d",
+    # "PD47269d", -- don't use, not there
+    "PD50508f",
+    # "PD50511e", -- don't use, likely mixture
+    "PD50523b",
+    # "PD48473b", -- don't use, not there
+    "PD50521b",
+    "PD50508b",
+    # "PD50521be", -- ignore; merged two sampling dates just for phasing, but should be analyzed separately
+    "PD46180c",
+    # "PD50502f", -- don't use, likely mixture
+    "PD50521e",
+    # "PD50511e_SS",  --- don't use
+    "PD50489e",
+]
+
 # ------------------------------------------------------------------------------------------------------------------------
 # Depth calculations
 #
@@ -24,17 +45,17 @@ rule t2t_depth:
     input:
         bam_path = str(t2t_hapfusion_output_path / "{sample_id}" / "chm13.{sample_id}.minimap2.primary_alignments.sorted.bam"),
     output:
-        depth_path = str(t2t_hapfusion_output_path / "{sample_id}" / "chm13.{sample_id}.{chrom}.depth.txt"),
-    shell:
-        "{samtools_path} depth -r {wildcards.chrom} {input.bam_path} > {output.depth_path}"
+        depth_path = str(t2t_hapfusion_output_path / "{sample_id}" / "chm13.{sample_id}.{chrom}.depth.txt.gz"),
+    run:
+        shell("{samtools_path} depth -r {wildcards.chrom} {input.bam_path} | gzip > {output.depth_path}")
 
 
 
 rule t2t_depth_final:
     input:
         [
-            str(t2t_hapfusion_output_path / f"{sample_id}" / f"chm13.{sample_id}.{chrom}.depth.txt") \
-            for sample_id in ["PD46180c"] \
+            str(t2t_hapfusion_output_path / f"{sample_id}" / f"chm13.{sample_id}.{chrom}.depth.txt.gz") \
+            for sample_id in sample_ids \
             for chrom in chrom_names
         ],
 
@@ -87,5 +108,31 @@ rule genetic_map_liftovers:
 rule genetic_map_liftovers_final:
     input:
         [str(t2t_lifted_genetic_map_path / f"male_{chrom}_genetic_map.txt") \
+            for chrom in aut_chrom_names
+        ]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Calculating expected number of detected crossovers
+#
+rule generate_fake_reads:
+    output:
+        csv = str(t2t_hapfusion_output_path / "{sample_id}" / "fake_reads_for_qc" / "{chrom}.csv"),
+    params:
+        n_fake_reads = 1000
+    run:
+        reads_df = annotate.generate_and_annotate_fake_reads(
+            wildcards.sample_id,
+            wildcards.chrom,
+            params.n_fake_reads,
+        )
+        reads_df.to_csv(
+            output.csv,
+            index=False,
+        )
+
+rule generate_fake_reads_final:
+    input:
+        [str(t2t_hapfusion_output_path / f"{sample_id}" / "fake_reads_for_qc" / f"{chrom}.csv") \
+            for sample_id in sample_ids
             for chrom in aut_chrom_names
         ]
