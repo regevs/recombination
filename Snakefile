@@ -3,6 +3,17 @@ import pandas as pd
 import numpy as np
 import os
 import subprocess
+import pickle
+
+sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/himut/src")
+sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
+
+import hapfusion
+import hapfusion.bamlib
+
+import himut
+import himut.bamlib
+import himut.phaselib
 
 from src import liftover, annotate
 
@@ -136,3 +147,96 @@ rule generate_fake_reads_final:
             for sample_id in sample_ids
             for chrom in aut_chrom_names
         ]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Phasing
+#
+rule t2t_phase:
+    input:
+        t2t_alignment_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        t2t_deepvariant_phased_vcf = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.deepvariant_1.1.0.vcf.bgz",
+    output:
+        t2t_raw_phasing_pickle = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "debug" / "chm13.{focal_sample_id}.{chrom}.phasing_info.pcl",
+    resources:
+        mem_mb = 32000,
+    run:
+        chrom2hblock_lst = {}
+        print("Calculating haplotype blocks...")
+
+        edge_lst, edge2counts, hblock_lst = himut.phaselib.get_hblock(
+            wildcards.chrom,
+            himut.bamlib.get_tname2tsize(input.t2t_alignment_bam_file)[1][wildcards.chrom],
+            str(input.t2t_alignment_bam_file),
+            str(input.t2t_deepvariant_phased_vcf),
+            min_bq = 20, # defaults
+            min_mapq = 20, 
+            min_p_value = 0.0001,
+            min_phase_proportion = 0.2,
+            chrom2hblock_lst = chrom2hblock_lst,
+        )
+
+        print("Done, saving...")
+        
+        pickle.dump(
+            {
+                "edge_lst": edge_lst,
+                "edge2counts": dict(edge2counts),
+                "hblock_lst": hblock_lst,
+            },
+            open(output.t2t_raw_phasing_pickle, "wb"),
+        )
+
+rule t2t_phase_final:
+    input:
+        t2t_raw_phasing_pickle = [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / f"{focal_sample_id}" / "debug" / f"chm13.{focal_sample_id}.{chrom}.phasing_info.pcl" \
+            for focal_sample_id in ["PD50489e"] \
+            for chrom in aut_chrom_names],
+
+rule denovo_phase:
+    input:
+        denovo_alignment_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        denovo_phased_vcf_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.phased.vcf.bgz",
+    output:
+        denovo_raw_phasing_pickle = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+            / "{focal_sample_id}" / "{focal_sample_id}.{denovo_chrom}.phasing_info.pcl"
+    resources:
+        mem_mb = 32000,
+    run:
+        chrom2hblock_lst = {}
+        print("Calculating haplotype blocks...")
+
+        edge_lst, edge2counts, hblock_lst = himut.phaselib.get_hblock(
+            wildcards.denovo_chrom,
+            himut.bamlib.get_tname2tsize(input.denovo_alignment_bam_file)[1][wildcards.denovo_chrom],
+            str(input.denovo_alignment_bam_file),
+            str(input.denovo_phased_vcf_file),
+            min_bq = 20, # defaults
+            min_mapq = 20, 
+            min_p_value = 0.0001,
+            min_phase_proportion = 0.2,
+            chrom2hblock_lst = chrom2hblock_lst,
+        )
+
+        print("Done, saving...")
+        
+        pickle.dump(
+            {
+                "edge_lst": edge_lst,
+                "edge2counts": dict(edge2counts),
+                "hblock_lst": hblock_lst,
+            },
+            open(output.denovo_raw_phasing_pickle, "wb"),
+        )
+
+rule denovo_phase_final:
+    input:
+        t2t_raw_phasing_pickle = [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.{denovo_chrom + '_RagTag'}.phasing_info.pcl" \
+            for focal_sample_id in ["PD50489e"] \
+            for denovo_chrom in aut_chrom_names],
