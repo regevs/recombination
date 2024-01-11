@@ -1,0 +1,25 @@
+rule run_trf:
+    input:
+        fasta = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
+    output:
+        dat = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta.{chrom}.trf.dat",
+    resources:
+        mem_mb=40000,
+    run:
+        # Extract single fasta sequence and run TRF
+        # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
+        shell(
+            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "{trf_path} - 2 7 7 80 10 50 500 -ngs -h "
+            "> {output.dat}"
+        )
+
+rule run_trf_final:
+    input:
+        dat = [str(hap_scaffolds_path \
+                    / f"{focal_sample_id}" / f"haplotype_{haplotype}" / f"ragtag.scaffold.fasta.{chrom}_RagTag.trf.dat") \
+            for focal_sample_id in ["PD50489e"]
+            for chrom in ["chr2"]
+            for haplotype in [1,2]]

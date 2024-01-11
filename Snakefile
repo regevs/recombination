@@ -27,13 +27,18 @@ minimap2_path = "/nfs/users/nfs_r/rs42/rs42/software/minimap2-2.26_x64-linux/min
 minidot_path = "/nfs/users/nfs_r/rs42/rs42/git/miniasm/minidot"
 samtools_path = "/nfs/users/nfs_r/rs42/rs42/software/samtools-1.18/samtools"
 bcftools_path = "/nfs/users/nfs_r/rs42/rs42/software/bcftools-1.18/bcftools"
+trf_path = "/nfs/users/nfs_r/rs42/rs42/software/trf409.linux64"
 ragtag_path = "ragtag.py"
 deepvariant_command = "/software/singularity-v3.9.0/bin/singularity exec -B /lustre /lustre/scratch126/casm/team154pc/sl17/01.himut/02.results/02.germline_mutations/deepvariant.simg"
 
+# Data paths
+root_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm")
+scaffolds_path = root_path / "02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds"
+hap_scaffolds_path = root_path / "01.data/05.ragtag/03.haplotype_specific_scaffolds"
+
 # Hapfusion output paths
-t2t_hapfusion_output_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13")
-hg19_hapfusion_output_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/01.grch37")
-denovo_hapfusion_output_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds")
+t2t_hapfusion_output_path = root_path / "02.results/01.read_alignment/01.ccs/03.T2T-CHM13"
+hg19_hapfusion_output_path = root_path / "02.results/01.read_alignment/01.ccs/01.grch37"
 
 # Samples to do
 sample_ids = [
@@ -66,6 +71,13 @@ sample_id_to_joint_id = {
     "PD50521e": "PD50521be",
     "PD50489e": "PD50489e",
 }
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Import other rules
+#
+include: "snakefiles/tandem_repeats.snk"
+
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Depth calculations
@@ -217,12 +229,12 @@ rule t2t_phase_final:
 
 rule denovo_phase:
     input:
-        denovo_alignment_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+        denovo_alignment_bam_file = scaffolds_path \
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
         denovo_unphased_vcf_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.vcf.bgz",
     output:
-        denovo_raw_phasing_pickle = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+        denovo_raw_phasing_pickle = scaffolds_path \
             / "{focal_sample_id}" / "debug" / "{focal_sample_id}.{denovo_chrom}.phasing_info.pcl"
     resources:
         mem_mb = 32000,
@@ -255,7 +267,7 @@ rule denovo_phase:
 
 rule denovo_phase_final:
     input:
-        t2t_raw_phasing_pickle = [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+        t2t_raw_phasing_pickle = [scaffolds_path \
             / f"{focal_sample_id}" / "debug" / f"{focal_sample_id}.{denovo_chrom + '_RagTag'}.phasing_info.pcl" \
             for focal_sample_id in ["PD50489e"] \
             for denovo_chrom in aut_chrom_names],
@@ -339,7 +351,7 @@ rule denovo_normalize_vcf:
 rule denovo_hiphase:
     input:
         denovo_reference = denovo_reference_func,
-        denovo_alignment_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+        denovo_alignment_bam_file = scaffolds_path \
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
         denovo_normed_unphased_vcf_file = Path("/lustre/scratchq126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.normed.vcf.bgz",
@@ -394,9 +406,9 @@ rule scaffold_haplotypes:
         query_fasta = denovo_hap_func,
         reference_fasta = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta"),
     output:
-        fasta = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        fasta = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
-        fai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        fai = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta.fai",
     threads: 16
     resources:
@@ -416,7 +428,7 @@ rule scaffold_haplotypes:
 
 rule scaffolad_haplotypes_final:
     input:
-        fasta = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        fasta = [str(hap_scaffolds_path \
             / f"{focal_sample_id}" / f"haplotype_{haplotype}" / "ragtag.scaffold.fasta") \
             for focal_sample_id in ["PD50489e"] \
             for haplotype in [1,2]]            
@@ -426,7 +438,7 @@ rule scaffolad_haplotypes_final:
 
 rule minimap2_to_haplotype:
     input:
-        denovo_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        denovo_reference = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
         fastq_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
             / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz",
@@ -626,12 +638,12 @@ rule phase_and_haplotag_final:
 #
 rule compare_haplotypes:
     input:
-        hap_1_fasta = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        hap_1_fasta = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_1" / "ragtag.scaffold.fasta",
-        hap_2_fasta = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        hap_2_fasta = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_2" / "ragtag.scaffold.fasta",
     output:
-        paf = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        paf = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_alignment.paf",
     threads: 32,
     resources:
@@ -658,7 +670,7 @@ rule paf_to_dot:
 
 rule compare_haplotypes_final:
     input:
-        eps = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        eps = [str(hap_scaffolds_path \
             / f"{focal_sample_id}" / "haplotype_alignment.pdf") \ 
             for focal_sample_id in ["PD50489e"]]
 
@@ -707,7 +719,7 @@ rule deepvariant_hifiasm_haplotagged:
             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam",
         bam_bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam.bai",
-        denovo_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/03.haplotype_specific_scaffolds") \
+        denovo_reference = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
     output:
         vcf_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \

@@ -602,7 +602,86 @@ def phase_and_haplotag(
                 read.tags += [('HP', hap_tag)]
                 outf.write(read)
 
-                
-    
+trf_columns = ["start_pos_1based", "end_pos_1based", "repeat_length", "n_copies", "concensus_length", "percent_matches", "percent_indels", "alignment_score", "percent_A", "percent_C", "percent_G", "percent_T", "entropy", "concensus", "full_repeat", "flank_seq1", "flank_seq2"]
+def add_tandem_repeat_finder_annotation(
+    events_df,
+    trf_hap1_filename,
+    trf_hap2_filename,
+):
+    print("Loading TRF results...")
+    trf_hap1_df = (
+        pl.scan_csv(
+            trf_hap1_filename,
+            has_header = False,
+            separator = " ",
+            comment_prefix = "@",
+            new_columns = trf_columns,
+        )
+        .with_columns(
+            (pl.col("start_pos_1based") - 1).alias("start_pos_0based"),
+            pl.col("end_pos_1based").alias("end_pos_0based")
+        )
+    )
 
+    trf_hap2_df = (
+        pl.scan_csv(
+            trf_hap2_filename,
+            has_header = False,
+            separator = " ",
+            comment_prefix = "@",
+            new_columns = trf_columns,
+        )
+        .with_columns(
+            (pl.col("start_pos_1based") - 1).alias("start_pos_0based"),
+            pl.col("end_pos_1based").alias("end_pos_0based")
+        )
+    )
+
+    # Create a dataframe that shows the TRF information for high confidence SNPs
+    for haplotype in [1, 2]:
+        ref_start_column_name = f"ref{haplotype}_start"
+        trf_df = [trf_hap1_df, trf_hap2_df][haplotype-1]
+
+        snp_repeat_cov_df = (events_df.lazy()
+            .filter(pl.col("is_high_conf_snp") == 1)
+            .select([ref_start_column_name])
+            .sort(by=ref_start_column_name)
+            .unique([ref_start_column_name])
+            .join_asof(
+                (trf_df
+                    .set_sorted("start_pos_0based")
+                    .select(["start_pos_0based", "end_pos_0based", "repeat_length", "n_copies"])
+                ),
+                left_on=ref_start_column_name,
+                right_on="start_pos_0based",
+                strategy="backward",
+            )
+            .filter(pl.col(ref_start_column_name) >= pl.col("start_pos_0based"))
+            .filter(pl.col(ref_start_column_name) < pl.col("end_pos_0based"))
+        )
+
+        # Add the column to the main df
+        events_df = (events_df.lazy()
+            .join(
+                (snp_repeat_cov_df
+                    .select([ref_start_column_name, "repeat_length", "n_copies"])
+                    .with_columns(pl.lit(1).alias("is_high_conf_snp"))            
+                ),
+                on=[ref_start_column_name, "is_high_conf_snp"],
+                how="left",
+            )
+            .with_columns(
+                pl.col("repeat_length").fill_null(0), 
+                pl.col("n_copies").fill_null(0)
+            )
+            .rename({
+                "repeat_length": f"trf_repeat_length_hap{haplotype}",
+                "n_copies": f"trf_n_copies_hap{haplotype}"
+            })
+        )
+
+    # Do it
+    events_df = events_df.collect(streaming=True)
+
+    return events_df
 
