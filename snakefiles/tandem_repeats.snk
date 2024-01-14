@@ -1,3 +1,7 @@
+# ------------------------------------------------------------------------------------------------------------------------
+# TRF (Tandem Repeat Finder)
+#
+
 rule run_trf:
     input:
         fasta = hap_scaffolds_path \
@@ -23,3 +27,32 @@ rule run_trf_final:
             for focal_sample_id in ["PD50489e"]
             for chrom in ["chr2"]
             for haplotype in [1,2]]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# sdust (Heng Li implementation, https://github.com/lh3/sdust)
+#
+rule run_sdust:
+    input:
+        fasta = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
+    output:
+        dat = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta.{chrom}.sdust.tsv",
+    resources:
+        mem_mb=4000,
+    run:
+        # Extract single fasta sequence and run sdust
+        # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
+        shell(
+            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "{sdust_path} -w 64 -t 20 - "
+            "> {output.dat}"
+        )
+
+rule run_sdust_final:
+    input:
+        dat = [str(hap_scaffolds_path \
+                    / f"{focal_sample_id}" / f"haplotype_{haplotype}" / f"ragtag.scaffold.fasta.{chrom}_RagTag.sdust.tsv") \
+            for focal_sample_id in ["PD50489e"]
+            for chrom in ["chr2"]
+            for haplotype in [1,2]]            

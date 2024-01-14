@@ -3,6 +3,7 @@ import msprime
 import pysam
 
 import pandas as pd
+import polars as pl
 import numpy as np
 import scipy.stats
 from pathlib import Path

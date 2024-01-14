@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.lines
 import seaborn as sns
@@ -13,12 +14,15 @@ import tqdm
 import pysam
 import fastq as fq
 
-sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
-import hapfusion
-from hapfusion import bamlib
+from . import annotate
 
-sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/himut/src")
-import himut
+
+# sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
+# import hapfusion
+# from hapfusion import bamlib
+
+# sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/himut/src")
+# import himut
 
 def convert_quality_string_to_array(quality_string):
     offset = 33  # Offset value for ASCII characters in FASTQ format
@@ -309,6 +313,8 @@ def run_all_refine_cigars(
     mapq2 = {}
     ref_start1 = {}
     ref_start2 = {}
+    base_qual1 = {}
+    base_qual2 = {}
 
     s, e = None, None 
 
@@ -319,6 +325,7 @@ def run_all_refine_cigars(
         is_forward1[read_name] = denovo_hap1_read_aln.is_forward
         mapq1[read_name] = denovo_hap1_read_aln.mapping_quality
         ref_start1[read_name] = denovo_hap1_read_aln.reference_start
+        base_qual1[read_name] = np.array(denovo_hap1_read_aln.query_qualities)
         
     for denovo_hap2_read_aln in denovo_hap2_bam.fetch(denovo_chrom, s, e):
         read_name = denovo_hap2_read_aln.query_name
@@ -327,6 +334,7 @@ def run_all_refine_cigars(
         is_forward2[read_name] = denovo_hap2_read_aln.is_forward
         mapq2[read_name] = denovo_hap2_read_aln.mapping_quality
         ref_start2[read_name] = denovo_hap2_read_aln.reference_start
+        base_qual2[read_name] = np.array(denovo_hap2_read_aln.query_qualities)
 
     s1, s2 = set(cigar_tuples1.keys()), set(cigar_tuples2.keys())
     common_reads = list(s1 & s2)
@@ -338,14 +346,6 @@ def run_all_refine_cigars(
             max(read_lengths1[read_name], read_lengths2[read_name])
         )
         
-        # jtdf["read_name"] = read_name
-        # jtdf["is_forward1"] = is_forward1[read_name]
-        # jtdf["is_forward2"] = is_forward2[read_name]
-        # jtdf["read_length1"] = read_lengths1[read_name]
-        # jtdf["read_length2"] = read_lengths2[read_name]
-        # jtdf["mapq1"] = mapq1[read_name]
-        # jtdf["mapq2"] = mapq2[read_name]
-
         jtdf = jtdf.with_columns(
             pl.lit(read_name).alias("read_name"),
             pl.lit(is_forward1[read_name]).alias("is_forward1"),
@@ -358,6 +358,8 @@ def run_all_refine_cigars(
             (pl.col("ref1_end") + ref_start1[read_name]).alias("ref1_end"),
             (pl.col("ref2_start") + ref_start2[read_name]).alias("ref2_start"),
             (pl.col("ref2_end") + ref_start2[read_name]).alias("ref2_end"),
+            (pl.Series(name="qual_start1", values=base_qual1[read_name][np.array(jtdf["start"])])),
+            (pl.Series(name="qual_start2", values=base_qual2[read_name][np.array(jtdf["start"])])),
         )
         
         return jtdf
@@ -376,31 +378,34 @@ def run_all_refine_cigars(
     
     return cdf
 
-
-def estimate_phase_per_read(
-    read_refinement_filename,
-    min_mapq=60,
-    high_confidence_snp_slack = 10,
-    hap_and_certainty_to_bedgraph = {},
+def filter_read_refinements(
+    events_df,
+    min_mapq = 60,
 ):
-    # Read the joint csv
-    print("Loading csv...")
-    pdf = pl.scan_csv(
-        read_refinement_filename,
-    )
-    
-    print("Creating stats...")
     # Take only reads where both are mapped to the forward strand. TODO: include others?
-    fdf = pdf.filter(pl.col("is_forward1") & pl.col("is_forward2"))
+    events_df = events_df.filter(pl.col("is_forward1") & pl.col("is_forward2"))
 
     # Take only reads that have perfect mapping quality. TODO: include others?
-    fdf = fdf.filter((pl.col("mapq1") >= min_mapq) & (pl.col("mapq2") >= min_mapq))
+    events_df = events_df.filter((pl.col("mapq1") >= min_mapq) & (pl.col("mapq2") >= min_mapq))
 
-    # Create list of high confidence SNPs
-    high_confidence_snps = (fdf
-        .filter((pl.col("op1") != pl.col("op2")) & (pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8])) & (pl.col("length") == 1))
+    return events_df
+
+def extract_snps(
+    events_df,
+    high_confidence_snp_slack = 10,
+):
+    # Find SNPs
+    events_df = (events_df
+        .with_columns(
+            ((pl.col("op1") != pl.col("op2")) & (pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8])) & (pl.col("length") == 1)).alias("is_snp")
+        )
+    )
+   
+    # Find high confidence SNPs
+    high_confidence_snps = (events_df
+        .filter(pl.col("is_snp"))
         .join(
-            (fdf
+            (events_df
                 .select(["op1", "op2", "length", "read_name", "start", "end"])
                 .filter((pl.col("op1") == pl.col("op2")) & (pl.col("op1") == 7) & (pl.col("length") >= high_confidence_snp_slack))
             ),
@@ -408,14 +413,14 @@ def estimate_phase_per_read(
             right_on=["end", "read_name"],
         )
         .join(
-            fdf.filter(pl.col("length") == 0),        
+            events_df.filter(pl.col("length") == 0),        
             left_on=["start", "read_name"],
             right_on=["end", "read_name"],
             how="anti",
         )
         .drop(["op1_right", "op2_right", "length_right", "start_right"])
         .join(
-            (fdf
+            (events_df
                 .select(["op1", "op2", "length", "read_name", "start", "end"])
                 .filter((pl.col("op1") == pl.col("op2")) & (pl.col("op1") == 7) & (pl.col("length") >= high_confidence_snp_slack))
             ),
@@ -423,17 +428,24 @@ def estimate_phase_per_read(
             right_on=["start", "read_name"],
         )
         .join(
-            fdf.filter(pl.col("length") == 0),        
+            events_df.filter(pl.col("length") == 0),        
             left_on=["end", "read_name"],
             right_on=["start", "read_name"],
             how="anti",
         )
         .select(["read_name", "start", "end"])
-        .with_columns(pl.lit(1).alias("is_high_conf_snp"))
+        .with_columns(pl.lit(True).alias("is_high_conf_snp"))
     )
 
-    # Does each segment fit hap1 and/or hap2
-    tmpdf = (fdf
+    events_df = (events_df
+        .join(high_confidence_snps, on=["read_name", "start", "end"], how="left")
+        .with_columns(pl.col("is_high_conf_snp").fill_null(value=False))
+    )
+
+    snp_df = events_df.filter(pl.col("is_high_conf_snp"))
+
+    # Which haplotype fits better?
+    snp_df = (snp_df
         .with_columns(
             (pl.col("op1").is_in([0, 7]) | pl.col("op1").is_null()).cast(pl.Int32).alias("fits1"),
             (pl.col("op2").is_in([0, 7]) | pl.col("op2").is_null()).cast(pl.Int32).alias("fits2"),        
@@ -441,115 +453,200 @@ def estimate_phase_per_read(
         .with_columns(
             (pl.col("fits1") > pl.col("fits2")).cast(pl.Int32).alias("fits1_more"),
         )
-        .join(high_confidence_snps, on=["read_name", "start", "end"], how="left")
-        .with_columns(pl.col("is_high_conf_snp").fill_null(value=0))
+        .drop(columns=["fits1", "fits2"])
     )
 
-    # Collect
-    tmpdf = tmpdf.collect(streaming=True).lazy()
+    return snp_df
 
-    print("Adding coverage...")
-    # Add information about coverage
-    for k, bedgraph_filename in hap_and_certainty_to_bedgraph.items():
-        haplotype, certainty = k
+
+def snps_to_read_stats(
+    snps_df,
+    filter,
+    output_column_name,
+):
+    stats_df = (snps_df
+        .filter(filter)
+        .group_by("read_name")
+        .agg(
+            pl.col("fits1_more").mean().alias(output_column_name)
+        )
+    )
+
+    return stats_df
+
+
+# def estimate_phase_per_read(
+#     read_refinement_filename,
+#     min_mapq=60,
+#     high_confidence_snp_slack = 10,
+#     hap_and_certainty_to_bedgraph = {},
+# ):
+#     # Read the joint parquet
+#     pdf = pl.scan_parquet(
+#         read_refinement_filename,
+#     )
+    
+#     print("Creating stats...")
+#     # Take only reads where both are mapped to the forward strand. TODO: include others?
+#     fdf = pdf.filter(pl.col("is_forward1") & pl.col("is_forward2"))
+
+#     # Take only reads that have perfect mapping quality. TODO: include others?
+#     fdf = fdf.filter((pl.col("mapq1") >= min_mapq) & (pl.col("mapq2") >= min_mapq))
+
+#     # Create list of high confidence SNPs
+#     high_confidence_snps = (fdf
+#         .filter((pl.col("op1") != pl.col("op2")) & (pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8])) & (pl.col("length") == 1))
+#         .join(
+#             (fdf
+#                 .select(["op1", "op2", "length", "read_name", "start", "end"])
+#                 .filter((pl.col("op1") == pl.col("op2")) & (pl.col("op1") == 7) & (pl.col("length") >= high_confidence_snp_slack))
+#             ),
+#             left_on=["start", "read_name"],
+#             right_on=["end", "read_name"],
+#         )
+#         .join(
+#             fdf.filter(pl.col("length") == 0),        
+#             left_on=["start", "read_name"],
+#             right_on=["end", "read_name"],
+#             how="anti",
+#         )
+#         .drop(["op1_right", "op2_right", "length_right", "start_right"])
+#         .join(
+#             (fdf
+#                 .select(["op1", "op2", "length", "read_name", "start", "end"])
+#                 .filter((pl.col("op1") == pl.col("op2")) & (pl.col("op1") == 7) & (pl.col("length") >= high_confidence_snp_slack))
+#             ),
+#             left_on=["end", "read_name"],
+#             right_on=["start", "read_name"],
+#         )
+#         .join(
+#             fdf.filter(pl.col("length") == 0),        
+#             left_on=["end", "read_name"],
+#             right_on=["start", "read_name"],
+#             how="anti",
+#         )
+#         .select(["read_name", "start", "end"])
+#         .with_columns(pl.lit(1).alias("is_high_conf_snp"))
+#     )
+
+#     # Does each segment fit hap1 and/or hap2
+#     tmpdf = (fdf
+#         .with_columns(
+#             (pl.col("op1").is_in([0, 7]) | pl.col("op1").is_null()).cast(pl.Int32).alias("fits1"),
+#             (pl.col("op2").is_in([0, 7]) | pl.col("op2").is_null()).cast(pl.Int32).alias("fits2"),        
+#         ) 
+#         .with_columns(
+#             (pl.col("fits1") > pl.col("fits2")).cast(pl.Int32).alias("fits1_more"),
+#         )
+#         .join(high_confidence_snps, on=["read_name", "start", "end"], how="left")
+#         .with_columns(pl.col("is_high_conf_snp").fill_null(value=0))
+#     )
+
+#     # Collect
+#     tmpdf = tmpdf.collect(streaming=True).lazy()
+
+#     print("Adding coverage...")
+#     # Add information about coverage
+#     for k, bedgraph_filename in hap_and_certainty_to_bedgraph.items():
+#         haplotype, certainty = k
         
-        ref_start_column_name = f"ref{haplotype}_start"
-        coverage_column_name = f"hap{haplotype}_certainty_{certainty}_coverage"
+#         ref_start_column_name = f"ref{haplotype}_start"
+#         coverage_column_name = f"hap{haplotype}_certainty_{certainty}_coverage"
         
-        # Open the coverage bedgraph
-        covdf = pl.scan_csv(
-            bedgraph_filename,
-            separator="\t",
-            has_header=False,
-            new_columns=["chrom", "start_pos_0based", "end_pos_0based", "coverage"],
-        )
+#         # Open the coverage bedgraph
+#         covdf = pl.scan_csv(
+#             bedgraph_filename,
+#             separator="\t",
+#             has_header=False,
+#             new_columns=["chrom", "start_pos_0based", "end_pos_0based", "coverage"],
+#         )
 
-        # Create a dataframe that shows the coverage for SNPs
-        snp_cov_df = (tmpdf
-            .filter(pl.col("is_high_conf_snp") == 1)
-            .select([ref_start_column_name])
-            .sort(by=ref_start_column_name)
-            .unique([ref_start_column_name])
-            .join_asof(
-                (covdf
-                    .set_sorted("start_pos_0based")
-                    .select(["start_pos_0based", "end_pos_0based", "coverage"])
-                ),
-                left_on=ref_start_column_name,
-                right_on="start_pos_0based",
-                strategy="backward",
-            )
-            .filter(pl.col(ref_start_column_name) >= pl.col("start_pos_0based"))
-            .filter(pl.col(ref_start_column_name) < pl.col("end_pos_0based"))
-        )
+#         # Create a dataframe that shows the coverage for SNPs
+#         snp_cov_df = (tmpdf
+#             .filter(pl.col("is_high_conf_snp") == 1)
+#             .select([ref_start_column_name])
+#             .sort(by=ref_start_column_name)
+#             .unique([ref_start_column_name])
+#             .join_asof(
+#                 (covdf
+#                     .set_sorted("start_pos_0based")
+#                     .select(["start_pos_0based", "end_pos_0based", "coverage"])
+#                 ),
+#                 left_on=ref_start_column_name,
+#                 right_on="start_pos_0based",
+#                 strategy="backward",
+#             )
+#             .filter(pl.col(ref_start_column_name) >= pl.col("start_pos_0based"))
+#             .filter(pl.col(ref_start_column_name) < pl.col("end_pos_0based"))
+#         )
 
-        # Add the column to the main df
-        tmpdf = (tmpdf
-            .join(
-                (snp_cov_df
-                    .select([ref_start_column_name, "coverage"])
-                    .with_columns(pl.lit(1).alias("is_high_conf_snp"))            
-                ),
-                on=[ref_start_column_name, "is_high_conf_snp"],
-                how="left",
-            )
-            .with_columns(pl.col("coverage").fill_null(0))
-            .rename({"coverage": coverage_column_name})
-        )
+#         # Add the column to the main df
+#         tmpdf = (tmpdf
+#             .join(
+#                 (snp_cov_df
+#                     .select([ref_start_column_name, "coverage"])
+#                     .with_columns(pl.lit(1).alias("is_high_conf_snp"))            
+#                 ),
+#                 on=[ref_start_column_name, "is_high_conf_snp"],
+#                 how="left",
+#             )
+#             .with_columns(pl.col("coverage").fill_null(0))
+#             .rename({"coverage": coverage_column_name})
+#         )
 
-    tmpdf = tmpdf.collect(streaming=True)
+#     tmpdf = tmpdf.collect(streaming=True)
 
-    #
-    # Create the stats per read
-    #
+#     #
+#     # Create the stats per read
+#     #
 
-    print("Summarizing...")
-    # Count # of operaations that are the same or not
-    df1 = (tmpdf
-        .group_by("read_name")
-        .agg(
-            (pl.col("op1") == pl.col("op2")).mean().alias("frac_ops_same"),
-            (pl.col("op1") != pl.col("op2")).sum().alias("n_ops_different"),
-        )
-    )   
+#     print("Summarizing...")
+#     # Count # of operaations that are the same or not
+#     df1 = (tmpdf
+#         .group_by("read_name")
+#         .agg(
+#             (pl.col("op1") == pl.col("op2")).mean().alias("frac_ops_same"),
+#             (pl.col("op1") != pl.col("op2")).sum().alias("n_ops_different"),
+#         )
+#     )   
 
-    # Count what fraction of different operations fit hap1 more
-    df2 = (tmpdf
-        .filter(pl.col("op1") != pl.col("op2"))
-        .group_by("read_name")
-        .agg(
-            pl.col("fits1_more").mean().alias("frac_fits1_more"),        
-        )    
-    )
+#     # Count what fraction of different operations fit hap1 more
+#     df2 = (tmpdf
+#         .filter(pl.col("op1") != pl.col("op2"))
+#         .group_by("read_name")
+#         .agg(
+#             pl.col("fits1_more").mean().alias("frac_fits1_more"),        
+#         )    
+#     )
 
-    # The same, but only for mismatches (hopefully SNPs)
-    df3 = (tmpdf
-        .filter(pl.col("op1") != pl.col("op2"))
-        .filter(pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8]))
-        .group_by("read_name")
-        .agg(
-            pl.col("fits1_more").mean().alias("frac_fits1_more_snps"),        
-        )    
-    )
+#     # The same, but only for mismatches (hopefully SNPs)
+#     df3 = (tmpdf
+#         .filter(pl.col("op1") != pl.col("op2"))
+#         .filter(pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8]))
+#         .group_by("read_name")
+#         .agg(
+#             pl.col("fits1_more").mean().alias("frac_fits1_more_snps"),        
+#         )    
+#     )
 
-    # The same, but for high confidence SNPs
-    df4 = (tmpdf
-        .filter(pl.col("op1") != pl.col("op2"))
-        .filter(pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8]))
-        .filter(pl.col("is_high_conf_snp") == 1)
-        .group_by("read_name")
-        .agg(
-            pl.col("fits1_more").mean().alias("frac_fits1_more_snps_high_conf"),        
-        )    
-    )
+#     # The same, but for high confidence SNPs
+#     df4 = (tmpdf
+#         .filter(pl.col("op1") != pl.col("op2"))
+#         .filter(pl.col("op1").is_in([7,8]) & pl.col("op2").is_in([7,8]))
+#         .filter(pl.col("is_high_conf_snp") == 1)
+#         .group_by("read_name")
+#         .agg(
+#             pl.col("fits1_more").mean().alias("frac_fits1_more_snps_high_conf"),        
+#         )    
+#     )
 
-    hap_stats_df = (df1
-        .join(df2, on="read_name", how="outer")
-        .join(df3, on="read_name", how="outer")
-        .join(df4, on="read_name", how="outer")
-    )
+#     hap_stats_df = (df1
+#         .join(df2, on="read_name", how="outer")
+#         .join(df3, on="read_name", how="outer")
+#         .join(df4, on="read_name", how="outer")
+#     )
 
-    return tmpdf, hap_stats_df
+#     return tmpdf, hap_stats_df
 
 
 def phase_and_haplotag(
@@ -562,13 +659,17 @@ def phase_and_haplotag(
     min_mapq=60,
     high_confidence_snp_slack=10,
 ):
-    _, hap_stats_df = estimate_phase_per_read(
-        read_refinement_filename,
-        min_mapq=min_mapq,
-        high_confidence_snp_slack=high_confidence_snp_slack,
-    )
+    events_df = pl.scan_parquet(read_refinement_filename)
+    events_df = filter_read_refinements(events_df, min_mapq)
+    snps_df = extract_snps(events_df, high_confidence_snp_slack)
 
-    #hap_stats_df = hap_stats_df.collect(streaming=True)
+    snps_df = snps_df.collect(streaming=True)
+
+    hap_stats_df = snps_to_read_stats(
+        snps_df,
+        pl.col("is_high_conf_snp"),
+        "frac_fits1_more_snps_high_conf",    
+    )
 
     read_to_frac = dict(hap_stats_df.select(pl.col("read_name"), pl.col("frac_fits1_more_snps_high_conf").fill_null(0.5)).to_numpy())
     
@@ -602,13 +703,68 @@ def phase_and_haplotag(
                 read.tags += [('HP', hap_tag)]
                 outf.write(read)
 
+
+def add_phasing_coverage_annotation(
+    snps_df,
+    hap_and_certainty_to_bedgraph
+):
+    snps_df = snps_df.lazy()
+
+    # Add information about coverage
+    for k, bedgraph_filename in hap_and_certainty_to_bedgraph.items():
+        haplotype, certainty = k
+        
+        ref_start_column_name = f"ref{haplotype}_start"
+        coverage_column_name = f"hap{haplotype}_certainty_{certainty}_coverage"
+        
+        # Open the coverage bedgraph
+        covdf = pl.scan_csv(
+            bedgraph_filename,
+            separator="\t",
+            has_header=False,
+            new_columns=["chrom", "start_pos_0based", "end_pos_0based", "coverage"],
+        )
+
+        # Create a dataframe that shows the coverage for SNPs
+        snp_cov_df = (snps_df
+            .select([ref_start_column_name])
+            .sort(by=ref_start_column_name)
+            .unique([ref_start_column_name])
+            .join_asof(
+                (covdf
+                    .set_sorted("start_pos_0based")
+                    .select(["start_pos_0based", "end_pos_0based", "coverage"])
+                ),
+                left_on=ref_start_column_name,
+                right_on="start_pos_0based",
+                strategy="backward",
+            )
+            .filter(pl.col(ref_start_column_name) >= pl.col("start_pos_0based"))
+            .filter(pl.col(ref_start_column_name) < pl.col("end_pos_0based"))
+        )
+
+        # Add the column to the main df
+        snps_df = (snps_df
+            .join(
+                (snp_cov_df
+                    .select([ref_start_column_name, "coverage"])
+                    .with_columns(pl.lit(True).alias("is_high_conf_snp"))            
+                ),
+                on=[ref_start_column_name, "is_high_conf_snp"],
+                how="left",
+            )
+            .with_columns(pl.col("coverage").fill_null(0))
+            .rename({"coverage": coverage_column_name})
+        )
+        
+    return snps_df
+
 trf_columns = ["start_pos_1based", "end_pos_1based", "repeat_length", "n_copies", "concensus_length", "percent_matches", "percent_indels", "alignment_score", "percent_A", "percent_C", "percent_G", "percent_T", "entropy", "concensus", "full_repeat", "flank_seq1", "flank_seq2"]
 def add_tandem_repeat_finder_annotation(
     events_df,
     trf_hap1_filename,
     trf_hap2_filename,
 ):
-    print("Loading TRF results...")
     trf_hap1_df = (
         pl.scan_csv(
             trf_hap1_filename,
@@ -643,7 +799,6 @@ def add_tandem_repeat_finder_annotation(
         trf_df = [trf_hap1_df, trf_hap2_df][haplotype-1]
 
         snp_repeat_cov_df = (events_df.lazy()
-            .filter(pl.col("is_high_conf_snp") == 1)
             .select([ref_start_column_name])
             .sort(by=ref_start_column_name)
             .unique([ref_start_column_name])
@@ -665,7 +820,7 @@ def add_tandem_repeat_finder_annotation(
             .join(
                 (snp_repeat_cov_df
                     .select([ref_start_column_name, "repeat_length", "n_copies"])
-                    .with_columns(pl.lit(1).alias("is_high_conf_snp"))            
+                    .with_columns(pl.lit(True).alias("is_high_conf_snp"))            
                 ),
                 on=[ref_start_column_name, "is_high_conf_snp"],
                 how="left",
@@ -680,8 +835,86 @@ def add_tandem_repeat_finder_annotation(
             })
         )
 
-    # Do it
-    events_df = events_df.collect(streaming=True)
+    return events_df
+
+
+sdust_columns = ["chrom", "start_pos_0based", "end_pos_0based"]
+def add_sdust_annotation(
+    events_df,
+    sdust_hap1_filename,
+    sdust_hap2_filename,
+):
+    sdust_hap1_df = (
+        pl.scan_csv(
+            sdust_hap1_filename,
+            has_header = False,
+            separator = "\t",
+            new_columns = sdust_columns,
+        )
+    )
+
+    sdust_hap2_df = (
+        pl.scan_csv(
+            sdust_hap2_filename,
+            has_header = False,
+            separator = "\t",
+            new_columns = sdust_columns,
+        )
+    )
+
+    # Create a dataframe that shows the TRF information for high confidence SNPs
+    for haplotype in [1, 2]:
+        ref_start_column_name = f"ref{haplotype}_start"
+        sdust_df = [sdust_hap1_df, sdust_hap2_df][haplotype-1]
+
+        snp_repeat_cov_df = (events_df.lazy()
+            .select([ref_start_column_name])
+            .sort(by=ref_start_column_name)
+            .unique([ref_start_column_name])
+            .join_asof(
+                (sdust_df
+                    .set_sorted("start_pos_0based")
+                    .select(["start_pos_0based", "end_pos_0based"])
+                    .with_columns(pl.lit(1).alias("sdust_repeat"))
+                ),
+                left_on=ref_start_column_name,
+                right_on="start_pos_0based",
+                strategy="backward",
+            )
+            .filter(pl.col(ref_start_column_name) >= pl.col("start_pos_0based"))
+            .filter(pl.col(ref_start_column_name) < pl.col("end_pos_0based"))
+        )
+
+        # Add the column to the main df
+        events_df = (events_df.lazy()
+            .join(
+                (snp_repeat_cov_df
+                    .select([ref_start_column_name, "sdust_repeat"])
+                    .with_columns(pl.lit(True).alias("is_high_conf_snp"))            
+                ),
+                on=[ref_start_column_name, "is_high_conf_snp"],
+                how="left",
+            )
+            .with_columns(
+                pl.col("sdust_repeat").fill_null(0), 
+            )
+            .rename({
+                "sdust_repeat": f"sdust_repeat_length_hap{haplotype}",
+            })
+        )
 
     return events_df
 
+def add_high_quality_annotation(
+    events_df,
+    phased_coverage_min = 3,
+    base_qual_min = 93,
+):
+    return events_df.with_columns(
+        (pl.col("is_high_conf_snp") & \
+        ((pl.col("hap1_certainty_0.95_coverage") >= phased_coverage_min) & (pl.col("hap2_certainty_0.95_coverage") >= phased_coverage_min)) & \
+        ((pl.col("trf_repeat_length_hap1") == 0) & (pl.col("trf_repeat_length_hap2") == 0)) & \
+        ((pl.col("sdust_repeat_length_hap1") == 0) & (pl.col("sdust_repeat_length_hap2") == 0)) & 
+        ((pl.col("qual_start1") == base_qual_min) & (pl.col("qual_start2") == base_qual_min))).alias("is_high_quality_snp")
+    )
+    

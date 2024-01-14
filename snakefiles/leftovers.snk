@@ -1,0 +1,323 @@
+# ------------------------------------------------------------------------------------------------------------------------
+# Hapfusion Phasing
+#
+rule t2t_phase:
+    input:
+        t2t_alignment_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        t2t_deepvariant_unphased_vcf = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.deepvariant_1.1.0.vcf.bgz",
+    output:
+        t2t_raw_phasing_pickle = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "debug" / "chm13.{focal_sample_id}.{chrom}.phasing_info.pcl",
+    resources:
+        mem_mb = 32000,
+    run:
+        chrom2hblock_lst = {}
+        print("Calculating haplotype blocks...")
+
+        edge_lst, edge2counts, hblock_lst = himut.phaselib.get_hblock(
+            wildcards.chrom,
+            himut.bamlib.get_tname2tsize(input.t2t_alignment_bam_file)[1][wildcards.chrom],
+            str(input.t2t_alignment_bam_file),
+            str(input.t2t_deepvariant_unphased_vcf),
+            min_bq = 20, # defaults
+            min_mapq = 20, 
+            min_p_value = 0.0001,
+            min_phase_proportion = 0.2,
+            chrom2hblock_lst = chrom2hblock_lst,
+        )
+
+        print("Done, saving...")
+        
+        pickle.dump(
+            {
+                "edge_lst": edge_lst,
+                "edge2counts": dict(edge2counts),
+                "hblock_lst": hblock_lst,
+            },
+            open(output.t2t_raw_phasing_pickle, "wb"),
+        )
+
+rule t2t_phase_final:
+    input:
+        t2t_raw_phasing_pickle = [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / f"{focal_sample_id}" / "debug" / f"chm13.{focal_sample_id}.{chrom}.phasing_info.pcl" \
+            for focal_sample_id in ["PD50489e"] \
+            for chrom in aut_chrom_names],
+
+rule denovo_phase:
+    input:
+        denovo_alignment_bam_file = scaffolds_path \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        denovo_unphased_vcf_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.vcf.bgz",
+    output:
+        denovo_raw_phasing_pickle = scaffolds_path \
+            / "{focal_sample_id}" / "debug" / "{focal_sample_id}.{denovo_chrom}.phasing_info.pcl"
+    resources:
+        mem_mb = 32000,
+    run:
+        chrom2hblock_lst = {}
+        print("Calculating haplotype blocks...")
+
+        edge_lst, edge2counts, hblock_lst = himut.phaselib.get_hblock(
+            wildcards.denovo_chrom,
+            himut.bamlib.get_tname2tsize(input.denovo_alignment_bam_file)[1][wildcards.denovo_chrom],
+            str(input.denovo_alignment_bam_file),
+            str(input.denovo_unphased_vcf_file),
+            min_bq = 20, # defaults
+            min_mapq = 20, 
+            min_p_value = 0.0001,
+            min_phase_proportion = 0.2,
+            chrom2hblock_lst = chrom2hblock_lst,
+        )
+
+        print("Done, saving...")
+        
+        pickle.dump(
+            {
+                "edge_lst": edge_lst,
+                "edge2counts": dict(edge2counts),
+                "hblock_lst": hblock_lst,
+            },
+            open(output.denovo_raw_phasing_pickle, "wb"),
+        )
+
+rule denovo_phase_final:
+    input:
+        t2t_raw_phasing_pickle = [scaffolds_path \
+            / f"{focal_sample_id}" / "debug" / f"{focal_sample_id}.{denovo_chrom + '_RagTag'}.phasing_info.pcl" \
+            for focal_sample_id in ["PD50489e"] \
+            for denovo_chrom in aut_chrom_names],
+
+# ------------------------------------------------------------------------------------------------------------------------
+# hiphase Phasing
+#
+rule t2t_hiphase:
+    input:
+        t2t_alignment_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        t2t_deepvariant_unphased_vcf = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.deepvariant_1.1.0.vcf.bgz",
+        t2t_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta"),
+    output:
+        t2t_phased_vcf_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.deepvariant_1.1.0.hiphase.vcf.gz",
+        t2t_haplotagged_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.bam",
+        t2t_haplotagged_bai_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.bam.bai",
+    resources:
+        mem_mb=10000,
+    threads: 16
+    run:
+        shell(
+            f"hiphase "
+            f"--bam {input.t2t_alignment_bam_file} "
+            f"--vcf {input.t2t_deepvariant_unphased_vcf} "
+            f"--reference {input.t2t_reference} " 
+            f"--output-vcf {output.t2t_phased_vcf_gz} " 
+            f"--output-bam {output.t2t_haplotagged_bam_file} "
+            f"--ignore-read-groups "
+            f"--threads {threads} "
+            f"--min-vcf-qual 20 "
+            f"--min-mapq 20 "            
+        )
+
+        shell(
+            "{samtools_path} index {output.t2t_haplotagged_bam_file}"
+        ) 
+
+rule t2t_hiphase_final:
+    input:
+        t2t_phased_vcf_gz = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / f"{focal_sample_id}" / f"chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.bam") \
+            for focal_sample_id in sample_ids]
+
+
+def denovo_reference_func(wildcards):
+    joint_id = sample_id_to_joint_id[wildcards.focal_sample_id]
+    denovo_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/05.ragtag/02.scaffold") \
+            / f"{joint_id}" / f"{joint_id}.ragtag_scaffold.fasta"
+    return denovo_reference
+
+rule denovo_normalize_vcf:
+    input:
+        denovo_reference = denovo_reference_func,
+        denovo_unphased_vcf_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.vcf.bgz",
+    output:
+        denovo_normed_unphased_vcf_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.normed.vcf.bgz",
+    run:
+        regions = ",".join([f"{chrom}_RagTag" for chrom in chrom_names])
+        shell(
+            f"{bcftools_path} norm "
+            f"--check-ref s "
+            f"--fasta-ref {input.denovo_reference} "
+            f"--regions {regions}  "
+            f"--do-not-normalize "
+            f"--output-type z "
+            f"--output {output.denovo_normed_unphased_vcf_file} "
+            f"{input.denovo_unphased_vcf_file} "
+        )
+
+        shell(
+            f"{bcftools_path} index {output.denovo_normed_unphased_vcf_file}"
+        )
+
+rule denovo_hiphase:
+    input:
+        denovo_reference = denovo_reference_func,
+        denovo_alignment_bam_file = scaffolds_path \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        denovo_normed_unphased_vcf_file = Path("/lustre/scratchq126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.normed.vcf.bgz",
+    output:
+        denovo_phased_vcf_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.deepvariant_1.1.0.hiphase.vcf.gz",
+    resources:
+        mem_mb=10000,
+    threads: 16
+    run:
+        shell(
+            f"hiphase "
+            f"--bam {input.denovo_alignment_bam_file} "
+            f"--vcf {input.denovo_normed_unphased_vcf_file} "
+            f"--reference {input.denovo_reference} " 
+            f"--output-vcf {output.denovo_phased_vcf_gz} "
+            f"--ignore-read-groups "
+            f"--threads {threads} "
+            f"--min-vcf-qual 20 "
+            f"--min-mapq 20 "            
+        ) 
+
+rule denovo_hiphase_final:
+    input:
+        denovo_phased_vcf_gz = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.minimap2.deepvariant_1.1.0.hiphase.vcf.gz") \
+            for focal_sample_id in sample_ids]
+
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Compare the two haplotypes
+#
+rule compare_haplotypes:
+    input:
+        hap_1_fasta = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_1" / "ragtag.scaffold.fasta",
+        hap_2_fasta = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_2" / "ragtag.scaffold.fasta",
+    output:
+        paf = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_alignment.paf",
+    threads: 32,
+    resources:
+        mem_mb=64000,            
+    run:
+        shell(
+            "{minimap2_path} -xasm5 "
+            "-t {threads} "
+            "{input.hap_1_fasta} {input.hap_2_fasta} "
+            " > {output.paf}"
+        )
+
+rule paf_to_dot:
+    input:
+        paf = "{something}/{prefix}.paf",
+    output:
+        eps = "{something}/{prefix}.eps",
+        pdf = "{something}/{prefix}.pdf",
+    run:
+        shell(
+            "{minidot_path} -f 5 -d {input.paf} > {output.eps}"
+        )
+        shell("epstopdf {output.eps}")
+
+rule compare_haplotypes_final:
+    input:
+        eps = [str(hap_scaffolds_path \
+            / f"{focal_sample_id}" / "haplotype_alignment.pdf") \ 
+            for focal_sample_id in ["PD50489e"]]
+
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Run DeepVariant again on the haplotagged aligment
+#
+
+rule deepvariant_haplotagged:
+    input:
+        t2t_haplotagged_bam_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.bam",
+        t2t_haplotagged_bai_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.bam.bai",
+        t2t_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta"),
+    output:
+        vcf_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.deepvariant_1.1.0.vcf.gz",
+    threads: 16,
+    resources:
+        mem_mb=64000,
+    run:
+        regions = ' '.join(chrom_names)
+        shell(
+            "ulimit -u 10000 && "
+            "{deepvariant_command} /opt/deepvariant/bin/run_deepvariant "
+            "--model_type PACBIO "
+            "--ref {input.t2t_reference} "
+            "--reads {input.t2t_haplotagged_bam_file} "
+            "--use_hp_information "
+            "--output_vcf {output.vcf_gz} "
+            "--num_shards {threads} "
+            "--regions {regions} "
+        )
+
+rule deepvariant_haplotagged_final:
+    input:
+        vcf_gz = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13") \
+            / f"{focal_sample_id}" / f"chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.haplotagged.deepvariant_1.1.0.vcf.gz") \
+            for focal_sample_id in ["PD50489e"]]
+
+
+rule deepvariant_hifiasm_haplotagged:
+    input:
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam",
+        bam_bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam.bai",
+        denovo_reference = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
+    output:
+        vcf_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.deepvariant_1.1.0.csv.gz",
+    threads: 16,
+    resources:
+        mem_mb=64000,
+    run:
+        shell(
+            "ulimit -u 10000 && "
+            "{deepvariant_command} /opt/deepvariant/bin/run_deepvariant "
+            "--model_type PACBIO "
+            "--ref {input.denovo_reference} "
+            "--reads {input.bam} "
+            "--use_hp_information "
+            "--output_vcf {output.vcf_gz} "
+            "--num_shards {threads} "
+            "--regions {wildcards.chrom} "
+        )
+
+        # shell(
+        #     f"{bcftools_path} index {output.vcf_gz}"
+        # )
+
+rule deepvariant_hifiasm_haplotagged_final:
+    input:
+        vcf_gz = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.{chrom}_RagTag.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.deepvariant_1.1.0.csv.gz") \
+            for focal_sample_id in ["PD50489e"]
+            for chrom in ["chr2"]
+            for haplotype in [1,2]
+            ]
