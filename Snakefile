@@ -5,6 +5,7 @@ import numpy as np
 import os
 import subprocess
 import pickle
+import re
 
 sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/himut/src")
 sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
@@ -209,30 +210,39 @@ rule scaffold_haplotypes:
         query_fasta = denovo_hap_func,
         reference_fasta = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta"),
     output:
+        agp = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.agp",
         fasta = hap_scaffolds_path \
             / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
-        fai = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta.fai",
+        expanded_fasta = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+        expanded_fai = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta.fai",
     threads: 16
     resources:
         mem_mb=50000,
     run:
+        # To infer gaps: " -r -g 2 -m 100000000 "
         output_directory = Path(output.fasta).parent
         shell(
             "{ragtag_path} scaffold {input.reference_fasta} {input.query_fasta}"
             " -o {output_directory} "
-            " -u -w "
+            " -u -w "            
             " --aligner {minimap2_path} "
             " -t {threads} "
         )
+        with open(output.fasta, 'r') as infile:
+            with open(output.expanded_fasta, 'w') as outfile:
+                outfile.write(re.sub(r'N{100}', 'N'*30000, infile.read()))
+
         shell(
-            "{samtools_path} faidx {output.fasta}"
+            "{samtools_path} faidx {output.expanded_fasta}"
         )
 
-rule scaffolad_haplotypes_final:
+rule scaffold_haplotypes_final:
     input:
         fasta = [str(hap_scaffolds_path \
-            / f"{focal_sample_id}" / f"haplotype_{haplotype}" / "ragtag.scaffold.fasta") \
+            / f"{focal_sample_id}" / f"haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta") \
             for focal_sample_id in ["PD50489e"] \
             for haplotype in [1,2]]            
 
@@ -242,7 +252,7 @@ rule scaffolad_haplotypes_final:
 rule minimap2_to_haplotype:
     input:
         denovo_reference = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.fasta",
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
         fastq_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
             / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz",
     output:
@@ -296,3 +306,50 @@ rule minimap2_to_haplotype_final:
             for focal_sample_id in ["PD50489e"] \
             for haplotype in [1,2]]
 
+# ------------------------------------------------------------------------------------------------------------------------
+# Mapping contigs back to scaffolds to obtain phasing blocks
+#
+
+def denovo_all_contigs_func(wildcards):
+    joint_id = sample_id_to_joint_id[wildcards.focal_sample_id]
+    denovo_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/") \
+            / f"{joint_id}" / f"{joint_id}.asm.bp.p_ctg.fasta"
+    return denovo_reference
+
+rule minimap2_contigs_back_to_scaffold:
+    input:
+        scaffold = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+        contig_fasta = denovo_all_contigs_func,
+    output:
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2_back_contigs.sorted.bam",
+        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2_back_contigs.sorted.bam.bai",
+    threads: 32,
+    resources:
+        mem_mb=50000,
+    run:
+        # Only primary alignments, 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
+        # "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
+
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.focal_sample_id}\\tPL:PACBIO\\tSM:{wildcards.focal_sample_id}\\tPU:{wildcards.focal_sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax asm5 -k28 -w28 -A1 -B39 -N50 -s200 "
+            "{input.scaffold} "
+            "{input.contig_fasta} "
+            "| {samtools_path} sort -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index {output.bam}"
+        )
+
+rule minimap2_contigs_back_to_scaffold_final:
+    input:
+        [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.hap{haplotype}.minimap2_back_contigs.sorted.bam" \
+            for focal_sample_id in ["PD50489e"] \
+            for haplotype in [1,2]]

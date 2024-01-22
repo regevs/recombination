@@ -290,6 +290,7 @@ def refine_cigartuples(
     jtdf = pl.DataFrame(
         joint_tuples, 
         schema=["start", "end", "length", "op1", "op2", "ref1_start", "ref1_end", "ref1_gap", "ref2_start", "ref2_end", "ref2_gap", "cigar_ptr1", "cigar_ptr2"], 
+        orient="row",
     )
 
     return jtdf
@@ -381,12 +382,30 @@ def run_all_refine_cigars(
 def filter_read_refinements(
     events_df,
     min_mapq = 60,
+    max_total_mismatches = 20,
 ):
     # Take only reads where both are mapped to the forward strand. TODO: include others?
     events_df = events_df.filter(pl.col("is_forward1") & pl.col("is_forward2"))
 
     # Take only reads that have perfect mapping quality. TODO: include others?
     events_df = events_df.filter((pl.col("mapq1") >= min_mapq) & (pl.col("mapq2") >= min_mapq))
+
+    # Take only reads without too many mismatches to both haplotypes (TODO: other indels?)
+    events_df = (events_df
+        .join(
+            (events_df
+                .filter((pl.col("op1") == 8) & (pl.col("op2") == 8))
+                .group_by("read_name")
+                .agg(
+                    pl.col("length").sum().alias("total_mismatches"),
+                )
+            ),
+            on="read_name",
+            how="left",
+        )
+        .fill_null(0)
+        .filter(pl.col("total_mismatches") <= max_total_mismatches)
+    )
 
     return events_df
 
@@ -650,20 +669,19 @@ def snps_to_read_stats(
 
 
 def phase_and_haplotag(
-    read_refinement_filename,
+    high_confidence_snps_filename,
     input_bam_hap1_filename,
     input_bam_hap2_filename,
     output_bam_hap1_filename,
     output_bam_hap2_filename,
     certainty_threshold=0.95,
-    min_mapq=60,
-    high_confidence_snp_slack=10,
 ):
-    events_df = pl.scan_parquet(read_refinement_filename)
-    events_df = filter_read_refinements(events_df, min_mapq)
-    snps_df = extract_snps(events_df, high_confidence_snp_slack)
+    # events_df = pl.scan_parquet(read_refinement_filename)
+    # events_df = filter_read_refinements(events_df, min_mapq)
+    # snps_df = extract_snps(events_df, high_confidence_snp_slack)
 
-    snps_df = snps_df.collect(streaming=True)
+    # snps_df = snps_df.collect(streaming=True)
+    snps_df = pl.read_parquet(high_confidence_snps_filename)
 
     hap_stats_df = snps_to_read_stats(
         snps_df,
@@ -905,16 +923,126 @@ def add_sdust_annotation(
 
     return events_df
 
+
+def add_high_confidence_annotation(
+    events_df,
+    base_qual_min = 60,
+):
+    return events_df.with_columns(
+        (((pl.col("trf_repeat_length_hap1") == 0) & (pl.col("trf_repeat_length_hap2") == 0)) & \
+         ((pl.col("sdust_repeat_length_hap1") == 0) & (pl.col("sdust_repeat_length_hap2") == 0)) & 
+         ((pl.col("qual_start1") >= base_qual_min) & (pl.col("qual_start2") >= base_qual_min))).alias("is_high_conf_snp")
+    )
+
 def add_high_quality_annotation(
     events_df,
     phased_coverage_min = 3,
-    base_qual_min = 93,
 ):
-    return events_df.with_columns(
-        (pl.col("is_high_conf_snp") & \
-        ((pl.col("hap1_certainty_0.95_coverage") >= phased_coverage_min) & (pl.col("hap2_certainty_0.95_coverage") >= phased_coverage_min)) & \
-        ((pl.col("trf_repeat_length_hap1") == 0) & (pl.col("trf_repeat_length_hap2") == 0)) & \
-        ((pl.col("sdust_repeat_length_hap1") == 0) & (pl.col("sdust_repeat_length_hap2") == 0)) & 
-        ((pl.col("qual_start1") == base_qual_min) & (pl.col("qual_start2") == base_qual_min))).alias("is_high_quality_snp")
+    return events_df.with_columns((
+            pl.col("is_high_conf_snp") & \
+            (pl.col("hap1_certainty_0.95_coverage") >= phased_coverage_min) & 
+            (pl.col("hap2_certainty_0.95_coverage") >= phased_coverage_min)
+        ).alias("is_high_quality_snp")
     )
     
+# ----------------------------------------------------------------------------------------------------
+# Classify reads
+#
+def classify_read(snp_subset_df):
+    # Only look at high quality SNPs
+    snp_subset_df = snp_subset_df.filter(pl.col("is_high_quality_snp"))
+    
+    # Look at transitions
+    transitions = np.diff(snp_subset_df["fits1_more"])!=0
+    n_transitions = np.sum(transitions)
+    
+    if n_transitions == 0:
+        what = "None"
+    else:
+        idx_transitions = np.where(transitions)[0]
+        first_trans = idx_transitions[0]
+        last_trans = idx_transitions[-1]
+        if n_transitions == 1:
+            if first_trans > 0 and last_trans < len(snp_subset_df)-1:
+                what = "CO"
+            else:
+                what = "ambiguous"
+        else:
+            if n_transitions == 2:
+                what = "GC"
+            else:
+                what = "CNCO"
+        
+    
+    res_df = pl.DataFrame(
+        {
+            "read_name": snp_subset_df["read_name"][0], 
+            "n_transitions": n_transitions, 
+            "class": what,                
+        }
+    )
+    
+    return res_df
+
+def classify_all_reads(
+    snps_df,       
+    candidates_df,
+):
+    # Take subsets of SNPs that belong only to candidate reads, and are of high quality
+    cand_snps_df = (snps_df
+        .join(candidates_df, on="read_name")
+        .filter("is_high_quality_snp")
+        .sort(by=["read_name", "start"])
+    )
+
+    # Figure out the transition points
+    nzi = np.nonzero(
+        (np.diff(cand_snps_df["fits1_more"])!=0) & \
+        (cand_snps_df["read_name"][:-1] == cand_snps_df["read_name"][1:]).to_numpy()
+    )[0]
+
+    trans_df = pl.DataFrame({
+        "read_name": cand_snps_df[nzi]["read_name"],
+        "first_hap1": cand_snps_df[nzi]["ref1_start"], 
+        "second_hap1": cand_snps_df[nzi+1]["ref1_start"],
+        "first_hap2": cand_snps_df[nzi]["ref2_start"], 
+        "second_hap2": cand_snps_df[nzi+1]["ref2_start"],
+    })
+
+    common_trans_df = (trans_df
+        .group_by(["first_hap1", "second_hap1", "first_hap2", "second_hap2"])
+        .count()
+        .sort(by="count", descending=True)
+        .filter(pl.col("count") > 1)
+    )
+
+    # Find reads with common transitions
+    reads_with_common_transitions_df = (trans_df
+        .join(
+            common_trans_df,
+            on=["first_hap1", "second_hap1", "first_hap2", "second_hap2"],
+        )
+        [["read_name"]]
+        .unique()
+        .with_columns(pl.lit(True).alias("has_common_transition"))
+    )
+
+    # Classify reads, add common transition information
+    classified_df = (snps_df
+        .join(
+            candidates_df,
+            on="read_name",
+        )
+        .group_by("read_name")
+        .map_groups(classify_read)
+        .join(
+            reads_with_common_transitions_df,
+            on="read_name",
+            how="left",
+        )
+        .with_columns(
+            pl.col("has_common_transition").fill_null(False)
+        ) 
+    )
+
+    return classified_df
