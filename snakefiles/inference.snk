@@ -1,0 +1,28 @@
+rule extract_snp_patterns:
+    input:
+        events_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+                    / "{focal_sample_id}" / "reads" / "{denovo_chrom}.certainty_{certainty}.snps.parquet",        
+        candidate_reads_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{denovo_chrom}.certainty_{certainty}.candidate_reads.parquet",
+    output:
+        patterns_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{denovo_chrom}.certainty_{certainty}.candidate_reads.patterns.parquet",
+    resources:
+        mem_mb = 16000,
+    run:
+        inference.extract_snp_patterns(
+            wildcards.focal_sample_id,
+            wildcards.denovo_chrom,
+            input.events_parquet,
+            input.candidate_reads_parquet,
+            take_every = 1,
+        ).write_parquet(output.patterns_parquet)
+
+
+rule inference_final:
+    input:
+        patterns_parquet = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.certainty_0.95.candidate_reads.patterns.parquet") \
+            for focal_sample_id in sample_ids
+            for chrom in aut_chrom_names]
+

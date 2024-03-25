@@ -1,4 +1,106 @@
 # ------------------------------------------------------------------------------------------------------------------------
+# Depth calculations
+#
+
+rule t2t_depth:
+    input:
+        bam_path = str(t2t_hapfusion_output_path / "{sample_id}" / "chm13.{sample_id}.minimap2.primary_alignments.sorted.bam"),
+    output:
+        depth_path = str(t2t_hapfusion_output_path / "{sample_id}" / "chm13.{sample_id}.{chrom}.depth.txt.gz"),
+    run:
+        shell("{samtools_path} depth -r {wildcards.chrom} {input.bam_path} | gzip > {output.depth_path}")
+
+
+
+rule t2t_depth_final:
+    input:
+        [
+            str(t2t_hapfusion_output_path / f"{sample_id}" / f"chm13.{sample_id}.{chrom}.depth.txt.gz") \
+            for sample_id in sample_ids \
+            for chrom in chrom_names
+        ],
+
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Liftovers
+#
+hg19_genetic_map_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/04.genetic_maps/01.Bherer_etal_SexualDimorphismRecombination/Refined_EUR_genetic_map_b37")
+t2t_lifted_genetic_map_path = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/04.genetic_maps/02.T2T_lifted_Bherer_etal_SexualDimorphismRecombination/Refined_EUR_genetic_map_b37")
+
+liftover_binary_path = Path("/nfs/users/nfs_r/rs42/rs42/software/liftOver")
+hg19_to_t2t_overchain_file = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/08.liftover/hg19-chm13v2.over.chain.gz")
+
+rule genetic_map_liftovers:
+    input:
+        map_path = hg19_genetic_map_path / "male_{chrom}.txt",
+    output:
+        input_bed_path = t2t_lifted_genetic_map_path / "male_{chrom}_input.bed",
+        output_bed_path = t2t_lifted_genetic_map_path / "male_{chrom}_output.bed",
+        output_unmapped_path = t2t_lifted_genetic_map_path / "male_{chrom}_unmapped",
+        output_map_path = t2t_lifted_genetic_map_path / "male_{chrom}_genetic_map.txt",
+    run:
+        # Prepare input bed file for liftover
+        genetic_map = pd.read_csv(input.map_path, delim_whitespace=True)  
+        (genetic_map            
+            .assign(start_pos = np.concatenate([[0], genetic_map.pos.values[:-1]]))
+            .assign(end_pos = genetic_map.pos.values)
+            [["chr", "start_pos", "end_pos", "start_pos", "end_pos"]]
+            .to_csv(output.input_bed_path, sep="\t", index=False, header=False)
+        )
+
+        # Liftover
+        shell(
+            f"{liftover_binary_path} "
+            f"{output.input_bed_path} "
+            f"{hg19_to_t2t_overchain_file} "
+            f"{output.output_bed_path} "
+            f"{output.output_unmapped_path} "
+            f"-minMatch=0.1 "
+        )
+
+        # Create the updated genetic maps
+        liftover.merge_genetic_map_and_liftover(
+            input.map_path,
+            output.output_bed_path,
+            output.output_map_path,
+        )
+
+
+rule genetic_map_liftovers_final:
+    input:
+        [str(t2t_lifted_genetic_map_path / f"male_{chrom}_genetic_map.txt") \
+            for chrom in aut_chrom_names
+        ]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Calculating expected number of detected crossovers
+#
+rule generate_fake_reads:
+    output:
+        csv = str(t2t_hapfusion_output_path / "{sample_id}" / "fake_reads_for_qc" / "{chrom}.csv"),
+    params:
+        n_fake_reads = 1000
+    run:
+        reads_df = annotate.generate_and_annotate_fake_reads(
+            wildcards.sample_id,
+            wildcards.chrom,
+            params.n_fake_reads,
+        )
+        reads_df.to_csv(
+            output.csv,
+            index=False,
+        )
+
+rule generate_fake_reads_final:
+    input:
+        [str(t2t_hapfusion_output_path / f"{sample_id}" / "fake_reads_for_qc" / f"{chrom}.csv") \
+            for sample_id in sample_ids
+            for chrom in aut_chrom_names
+        ]
+
+
+# ------------------------------------------------------------------------------------------------------------------------
 # Hapfusion Phasing
 #
 rule t2t_phase:
@@ -321,3 +423,91 @@ rule deepvariant_hifiasm_haplotagged_final:
             for chrom in ["chr2"]
             for haplotype in [1,2]
             ]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Mapping contigs back to scaffolds to obtain phasing blocks
+#
+
+def denovo_all_contigs_func(wildcards):
+    joint_id = sample_id_to_joint_id[wildcards.focal_sample_id]
+    denovo_reference = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/") \
+            / f"{joint_id}" / f"{joint_id}.asm.bp.p_ctg.fasta"
+    return denovo_reference
+
+rule minimap2_contigs_back_to_scaffold:
+    input:
+        scaffold = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+        contig_fasta = denovo_all_contigs_func,
+    output:
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2_back_contigs.sorted.bam",
+        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2_back_contigs.sorted.bam.bai",
+    threads: 32,
+    resources:
+        mem_mb=50000,
+    run:
+        # Only primary alignments, 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
+        # "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
+
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.focal_sample_id}\\tPL:PACBIO\\tSM:{wildcards.focal_sample_id}\\tPU:{wildcards.focal_sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax asm5 -k28 -w28 -A1 -B39 -N50 -s200 "
+            "{input.scaffold} "
+            "{input.contig_fasta} "
+            "| {samtools_path} sort -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index {output.bam}"
+        )
+
+rule minimap2_contigs_back_to_scaffold_final:
+    input:
+        [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.hap{haplotype}.minimap2_back_contigs.sorted.bam" \
+            for focal_sample_id in ["PD50489e"] \
+            for haplotype in [1,2]]
+
+
+
+# rule calculate_genome_coverage_on_haplotype_per_position:
+#     input:
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam",
+#         bam_bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam.bai",
+#     output:
+#         tsv = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.coverage_per_base.tsv.gz",
+#     run:
+#         shell(
+#             "{samtools_path} view --with-header --tag HP:{wildcards.haplotype} {input.bam} | "
+#             "{bedtools_path} genomecov -ibam - -dz | gzip -c > {output.tsv}"
+#         )        
+
+# rule calculate_reads_coverage_on_haplotype:
+#     input:
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam",
+#         bam_bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.bam.bai",
+#         bedgraph = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#     output:
+#         bed = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged.coverage.per_read_min_{coverage}.bed",    
+#     run:
+#         shell(
+#             "{bedtools_path} intersect "
+#             "-abam {input.bam} "
+#             "-b {input.bedgraph} "
+#             "-wao -sorted "
+#             "-bed | "
+#             "awk '$16 >= {wildcards.coverage}' | "
+#             "{bedtools_path} groupby -i stdin -g 1,2,3,4 -c 16 -o sum "
+#             " > {output.bed}"
+#         )
