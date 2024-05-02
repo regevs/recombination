@@ -4,6 +4,7 @@ import numba
 import scipy.optimize
 import tqdm
 from collections import Counter
+import warnings
 
 from . import diagnostics
 
@@ -247,6 +248,91 @@ def simulate_many_read_patterns(
 
     return subset_idx_transitions_array, subset_snp_positions_on_read_array, n_noevents
 
+# ------------------------------------------------------------------------------------------------
+#
+# Simulate according to genetic map, more slowly
+def simulate_read_patterns_genetic_map(
+    read_genetic_length_in_cM_list,
+    snp_positions_on_read_list,
+    read_starts_list,
+    read_ends_list,
+    rate_map,
+    random_seed,
+    CO = True,
+    GC_tract_mean = None,
+):
+    # Set seed
+    np.random.seed(random_seed)  
+
+    n_reads = len(read_genetic_length_in_cM_list)
+
+    # Define a histogram RV, which draws a single value proportionally
+    # to the genetic map
+    H = scipy.stats.rv_histogram(
+        [
+            np.nan_to_num(rate_map.rate),
+            np.concatenate([rate_map.left, [rate_map.right[-1]]]),
+        ],
+        density=True,
+    )
+
+    # Draw a pool of breakpoints
+    all_breakpoints = np.sort(H.rvs(size=10_000_000).astype(int))
+
+    # Decide for each read whether it saw a recombination or not
+    probs_recomb = np.array(read_genetic_length_in_cM_list) * 1e-2
+    event_indices = np.nonzero(np.random.random(n_reads) < probs_recomb)[0]    
+    n_events = len(event_indices)
+    n_noevents = n_reads - n_events
+    res = np.empty(n_events, dtype=object) 
+    
+    events_snp_positions_on_read_list = snp_positions_on_read_list[event_indices]
+    
+    for i in range(n_events):
+        event_idx = event_indices[i]
+        
+        # Find a breakpoint, conditional on a breakpoint being drawn
+        left_i = np.searchsorted(all_breakpoints, read_starts_list[event_idx], side="left")
+        right_i = np.searchsorted(all_breakpoints, read_ends_list[event_idx], side="left")
+        if right_i > left_i:
+            switch = np.random.choice(all_breakpoints[left_i:right_i])
+        else:
+            # Should rarely happen
+            switch = (read_starts_list[event_idx] + read_ends_list[event_idx]) // 2
+        
+        # Change to read coords
+        switch -= read_starts_list[event_idx]
+
+        idx_transitions = []        
+        snp_positions_on_read = events_snp_positions_on_read_list[i]        
+
+        if CO:
+            # Only switch
+            if not (switch <= snp_positions_on_read[0] or switch > snp_positions_on_read[-1]): 
+                idx_transitions.append(np.searchsorted(snp_positions_on_read, switch) - 1)
+
+        else: # GC
+            # First switch            
+            if not (switch <= snp_positions_on_read[0] or switch > snp_positions_on_read[-1]): 
+                idx_transitions.append(np.searchsorted(snp_positions_on_read, switch) - 1)
+
+            # Second switch
+            tract_length = np.random.geometric(1.0 / GC_tract_mean)
+            switch = switch + tract_length
+            if not (switch <= snp_positions_on_read[0] or switch > snp_positions_on_read[-1]): 
+                idx_transitions.append(np.searchsorted(snp_positions_on_read, switch) - 1)
+
+            # Remove doubles
+            if len(idx_transitions) == 2 and (idx_transitions[0] == idx_transitions[1]):
+                idx_transitions = []
+        
+        #print(i, event_idx, all_breakpoints[left_i], all_breakpoints[right_i], switch, snp_positions_on_read, idx_transitions)
+
+        # Add it
+        res[i] = idx_transitions
+
+    return res, event_indices, n_noevents
+
 
 # ------------------------------------------------------------------------------------------------
 #
@@ -487,6 +573,209 @@ def maximum_likelihood_all_reads(
 
 # ------------------------------------------------------------------------------------------------
 #
-# Exponential Likelihood
+# Permutation testing
 #
+def permutation_testing(pairs, n_perms=10, seed=42, method="AD"):
+    with warnings.catch_warnings(action="ignore"):
+        if method == "KS":
+            test_statistic = lambda x,y: scipy.stats.ks_2samp(x, y, method="auto").statistic
+        if method == "AD":
+            test_statistic = lambda x,y: scipy.stats.anderson_ksamp([x, y]).statistic
+        if method == "U":
+            test_statistic = lambda x,y: scipy.stats.mannwhitneyu(x, y, use_continuity=False).statistic
+            
+            
+        rng = np.random.default_rng(seed=seed)
+        orig = np.sum([test_statistic(x,y) for x,y in pairs if len(x)>2 and len(y)>2])
+        permuted = []
+        for i in range(n_perms):
+            sum_stats = 0
+            for x,y in pairs:
+                if len(x)>2 and len(y)>2:
+                    z = np.concatenate([x,y])
+                    px, py = np.split(rng.permutation(z), [len(x)])
+                    sum_stats += test_statistic(px, py)
+            permuted.append(sum_stats)
+            
+        pvalue = np.mean(np.array(permuted)>=orig)
+        return pvalue
 
+# ------------------------------------------------------------------------------------------------
+#
+# DSB analysis
+#
+def calculate_motif_distance_histogram(
+    reads_df,
+    motif_center_column,
+    motif_strand_column,
+    max_dist=30000,
+):
+    H = np.zeros(max_dist*2 + 1)
+    xs = np.arange(-max_dist, max_dist+1)
+
+    n_rows = 0
+    for row in reads_df.iter_rows(named=True):
+        n_rows += 1
+        if row[motif_strand_column] == 1:
+            H[
+                row["grch38_active_start_pos"] - row[motif_center_column] - (-max_dist):
+                row["grch38_active_end_pos"] - row[motif_center_column] - (-max_dist)
+            ] += \
+                (1.0 / row["grch38_active_region_length"])
+        else:
+            H[
+                -(row["grch38_active_end_pos"] - row[motif_center_column]) - (-max_dist):
+                -(row["grch38_active_start_pos"] - row[motif_center_column]) - (-max_dist)
+            ] += \
+                (1.0 / row["grch38_active_region_length"])
+        
+    H /= n_rows
+
+    return xs, H
+
+def calculate_motif_distance_to_converted_snps_histogram(
+    reads_df,
+    motif_center_column,
+    motif_strand_column,
+    max_dist=30000,
+):
+    H = np.zeros(max_dist*2 + 1)
+    xs = np.arange(-max_dist, max_dist+1)
+
+    n_rows = 0
+    for row in reads_df.iter_rows(named=True):
+        n_rows += 1
+        background_allele = row["high_quality_snp_positions_alleles"][0]
+        
+        n_converted_alleles = len([x for x in row["high_quality_snp_positions_alleles"] if x != background_allele])
+
+        for snp_pos, snp_allele in zip(row["high_quality_snp_positions"], row["high_quality_snp_positions_alleles"]):
+            if snp_allele != background_allele:
+                weight = 1.0 / n_converted_alleles
+                dist_to_motif = snp_pos + row["grch38_reference_start"] - row[motif_center_column]
+                if row[motif_strand_column] == 1:
+                    H[dist_to_motif - (-max_dist)] += weight
+                else:
+                    H[-dist_to_motif - (-max_dist)] += weight
+        
+    H /= n_rows
+
+    return xs, H    
+
+def motif_distance_histogram_symmetry_permutation_testing(
+    reads_df,
+    motif_center_column,
+    motif_strand_column,
+    max_dist=30000,
+    n_perms=1000,
+    hist_func = calculate_motif_distance_histogram,
+    stat = "max_abs",
+):
+    def symm_stat(H):
+        H1 = H
+        H2 = H[::-1]
+
+        if stat == "max_abs":
+            return np.max(np.abs(H1 - H2))
+        if stat == "sum_abs":
+            return np.sum(np.abs(H1 - H2))
+        if stat == "sum_sq_cumsum":
+            return np.sum(np.square(np.cumsum(H1) - np.cumsum(H2)))   
+        if stat == "max_sq_cumsum":
+            return np.max(np.square(np.cumsum(H1) - np.cumsum(H2)))   
+        
+    
+    rng = np.random.default_rng()
+
+    # Read stat
+    S = symm_stat(hist_func(
+        reads_df,
+        motif_center_column,
+        motif_strand_column,
+        max_dist,
+    )[1])
+
+    permed = []
+    for n_perm in range(n_perms):
+        permed.append(symm_stat(
+            hist_func(
+                reads_df.with_columns(
+                    pl.Series(
+                        name=motif_strand_column,
+                        values=rng.integers(2, size=len(reads_df)),
+                    ),
+                ),
+                motif_center_column,
+                motif_strand_column,
+                max_dist,
+            )[1]
+        ))
+
+    permed = np.array(permed)
+    pvalue = np.mean(permed >= S)
+
+    return pvalue
+
+def motif_distance_histogram_diffs_permutation_testing(
+    reads_df1,
+    reads_df2,
+    motif_center_column,
+    motif_strand_column,
+    max_dist=30000,
+    n_perms=1000,
+    hist_func = calculate_motif_distance_histogram,
+    stat="max_abs",
+):
+    def diff_stat(H1, H2):
+        #return np.sum((np.cumsum(H) - np.cumsum(H[::-1]))**2)
+        if stat == "max_abs":
+            return np.max(np.abs(H1 - H2))
+        if stat == "sum_abs":
+            return np.sum(np.abs(H1 - H2))
+        if stat == "sum_sq_cumsum":
+            return np.sum(np.square(np.cumsum(H1) - np.cumsum(H2)))
+        if stat == "max_sq_cumsum":
+            return np.max(np.square(np.cumsum(H1) - np.cumsum(H2)))   
+    
+    rng = np.random.default_rng()
+
+    # Read stat
+    H1 = hist_func(
+        reads_df1,
+        motif_center_column,
+        motif_strand_column,
+        max_dist,
+    )[1]
+    H2 = hist_func(
+        reads_df2,
+        motif_center_column,
+        motif_strand_column,
+        max_dist,
+    )[1]
+    S = diff_stat(H1, H2)
+
+    permed = []
+    for n_perm in range(n_perms):
+        shuffled_reads_df = pl.concat([reads_df1, reads_df2])
+        shuffled_reads_df = shuffled_reads_df.sample(len(shuffled_reads_df), shuffle=True)
+        shuffled_reads_df1 = shuffled_reads_df[:len(reads_df1)]
+        shuffled_reads_df2 = shuffled_reads_df[len(reads_df1):]
+        SH1 = hist_func(
+            shuffled_reads_df1,
+            motif_center_column,
+            motif_strand_column,
+            max_dist,
+        )[1]
+        SH2 = hist_func(
+            shuffled_reads_df2,
+            motif_center_column,
+            motif_strand_column,
+            max_dist,
+        )[1]
+        
+        permed.append(diff_stat(SH1, SH2))
+
+    permed = np.array(permed)
+    pvalue = np.mean(permed >= S)
+
+    return pvalue

@@ -791,11 +791,6 @@ def phase_and_haplotag(
     output_bam_hap2_filename,
     certainty_threshold=0.95,
 ):
-    # events_df = pl.scan_parquet(read_refinement_filename)
-    # events_df = filter_read_refinements(events_df, min_mapq)
-    # snps_df = extract_snps(events_df, high_confidence_snp_slack)
-
-    # snps_df = snps_df.collect(streaming=True)
     snps_df = pl.read_parquet(high_confidence_snps_filename)
 
     hap_stats_df = snps_to_read_stats(
@@ -1057,6 +1052,42 @@ def add_sdust_annotation(
 
     return events_df
 
+def add_allele_coverage_annotation(
+    events_df,
+    condition,
+):
+    df1 = (events_df
+        .filter(condition)
+        .filter("is_snp")
+        .group_by("ref1_start", "op1")
+        .len()
+        .group_by("ref1_start")
+        .agg(allele_coverage_hap1 = pl.col("len").min())
+    )
+
+    df2 = (events_df
+        .filter(condition)
+        .filter("is_snp")
+        .group_by("ref2_start", "op2")
+        .len()
+        .group_by("ref2_start")
+        .agg(allele_coverage_hap2 = pl.col("len").min())
+    )
+
+    events_df = (events_df
+        .join(
+            df1,
+            on=["ref1_start"],
+            how="left",
+        )
+        .join(
+            df2,
+            on=["ref2_start"],
+            how="left",
+        )
+    )
+
+    return events_df    
 
 def add_high_confidence_annotation(
     events_df,
@@ -1086,11 +1117,14 @@ def add_high_quality_annotation(
     input_column_prefix = "is_high_conf",
     output_column_prefix = "is_high_quality",
     phased_coverage_min = 3,
+    allele_coverage_min = 3,
 ):
     events_df = events_df.with_columns((
             pl.col(input_column_prefix + "_event") & \
             (pl.col("hap1_certainty_0.95_coverage") >= phased_coverage_min) & 
-            (pl.col("hap2_certainty_0.95_coverage") >= phased_coverage_min)
+            (pl.col("hap2_certainty_0.95_coverage") >= phased_coverage_min) &
+            (pl.col("allele_coverage_hap1") >= allele_coverage_min) &
+            (pl.col("allele_coverage_hap2") >= allele_coverage_min)
         ).alias(output_column_prefix + "_event")
     )
     
@@ -1168,7 +1202,7 @@ def classify_read(events_df):
         
     
     res_df = pl.DataFrame(
-        {
+        data={
             "read_name": [snp_subset_df["read_name"][0]], 
             "read_length": [snp_subset_df["read_length1"][0]],
             "n_transitions": [n_transitions], 
@@ -1187,7 +1221,27 @@ def classify_read(events_df):
             "mapq2": [snp_subset_df["mapq2"][0]],
             "is_forward1": [snp_subset_df["is_forward1"][0]],
             "is_forward2": [snp_subset_df["is_forward2"][0]],
-        }
+        },
+        schema=[
+            ('read_name', pl.String),
+            ('read_length', pl.Int64),
+            ('n_transitions', pl.Int64),
+            ('idx_transitions', pl.List(pl.Int64)),
+            ('snp_positions_on_read', pl.List(pl.Int64)),
+            ('class', pl.String),
+            ('total_mismatches', pl.Int64),
+            ('total_common_insertions', pl.Int64),
+            ('num_common_insertions', pl.Int64),
+            ('num_common_deletions', pl.Int64),
+            ('total_clipping', pl.Int64),
+            ('num_clipping', pl.Int64),
+            ('min_coverage_between_transitions_hap1', pl.Int64),
+            ('min_coverage_between_transitions_hap2', pl.Int64),
+            ('mapq1', pl.Int64),
+            ('mapq2', pl.Int64),
+            ('is_forward1', pl.Boolean),
+            ('is_forward2', pl.Boolean)
+        ],
     )
     
     return res_df
@@ -1197,6 +1251,7 @@ def classify_all_reads(
     candidates_df,
     cov1_df,
     cov2_df,
+    high_quality_classification_condition = pl.lit(True),
 ):
     # If there are no candidates, return empty DF
     if len(candidates_df) == 0:
@@ -1223,6 +1278,7 @@ def classify_all_reads(
                 ('mapq2', pl.Int64),
                 ('is_forward1', pl.Boolean),
                 ('is_forward2', pl.Boolean),
+                ('high_quality_classification', pl.Boolean),
             ]
         )
 
@@ -1286,6 +1342,13 @@ def classify_all_reads(
         .with_columns(
             pl.col("has_common_transition").fill_null(False)
         ) 
+    )
+
+    # Add high quality classification
+    classified_df = (classified_df
+        .with_columns(
+            high_quality_classification = high_quality_classification_condition,
+        )
     )
 
     return classified_df

@@ -8,6 +8,8 @@ import numpy as np
 import scipy.stats
 from pathlib import Path
 
+from . import inference
+
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
 
@@ -45,3 +47,513 @@ for chrom in aut_chrom_names:
             sequence_length=grch37_chromosome_sizes_in_bp[chrom],
         )
 
+
+# ---------------------------------------------------------------------------
+# Annotate read structure
+#
+
+# Detection prob functions
+def crossover_prob_detection_full_read(
+    read_length,
+    snp_positions,
+    GC_tract_mean,
+):
+    if len(snp_positions) < 4:
+        return 0.0
+    
+    prob = 0.0
+    for idx_trans in range(1, len(snp_positions)-2):
+        prob += inference.likelihood_of_read(
+            read_length = read_length,
+            snp_positions_on_read = snp_positions,
+            idx_transitions = [idx_trans],
+            prob_CO = 1,
+            prob_GC_component = 1,
+            GC_tract_mean = GC_tract_mean,
+            GC_tract_mean2 = 1000,
+            recombination_rate_per_bp = 1e-8,
+        ) / (1e-8 * read_length)
+    
+    return prob
+
+def crossover_prob_detection_in_crossover_active_interval(
+    read_length,
+    snp_positions,
+    GC_tract_mean,
+):
+    if len(snp_positions) < 4:
+        return 0.0
+    
+    snp_positions = np.array(snp_positions)
+    read_length = snp_positions[-2]-snp_positions[1]+1
+    snp_positions = snp_positions[1:-1]-snp_positions[1]
+    
+    prob = 0.0
+    for idx_trans in range(len(snp_positions)-1):
+        this_prob = inference.likelihood_of_read(
+            read_length = read_length,
+            snp_positions_on_read = snp_positions,
+            idx_transitions = [idx_trans],
+            prob_CO = 1,
+            prob_GC_component = 1,
+            GC_tract_mean = GC_tract_mean,
+            GC_tract_mean2 = 1000,
+            recombination_rate_per_bp = 1e-8,
+        ) / (1e-8 * (read_length-1))
+        prob += this_prob
+    
+    return prob
+
+def noncrossover_prob_detection_full_read(
+    read_length,
+    snp_positions,
+    GC_tract_mean,
+):
+    if len(snp_positions) < 3:
+        return 0.0
+    
+    prob = 0.0
+    for idx_trans in range(0, len(snp_positions)-2):
+        prob += inference.likelihood_of_read(
+            read_length = read_length,
+            snp_positions_on_read = snp_positions,
+            idx_transitions = [idx_trans, idx_trans+1],
+            prob_CO = 0,
+            prob_GC_component = 1,
+            GC_tract_mean = GC_tract_mean,
+            GC_tract_mean2 = 1000,
+            recombination_rate_per_bp = 1e-8,
+        ) / (1e-8 * read_length)
+    
+    return prob
+
+def noncrossover_prob_detection_in_noncrossover_active_interval(
+    read_length,
+    snp_positions,
+    GC_tract_mean,
+):
+    if len(snp_positions) < 3:
+        return 0.0
+    
+    snp_positions = np.array(snp_positions)
+    read_length = snp_positions[-1]-snp_positions[0]+1
+    snp_positions = snp_positions-snp_positions[0]    
+    
+    prob = 0.0
+    for idx_trans in range(0, len(snp_positions)-2):
+        prob += inference.likelihood_of_read(
+            read_length = read_length,
+            snp_positions_on_read = snp_positions,
+            idx_transitions = [idx_trans, idx_trans+1],
+            prob_CO = 0,
+            prob_GC_component = 1,
+            GC_tract_mean = GC_tract_mean,
+            GC_tract_mean2 = 1000,
+            recombination_rate_per_bp = 1e-8,
+        ) / (1e-8 * read_length)
+    
+    return prob
+
+def noncrossover_prob_detection_in_crossover_active_interval(
+    read_length,
+    snp_positions,
+    GC_tract_mean,
+):
+    if len(snp_positions) < 5:
+        return 0.0
+    
+    snp_positions = np.array(snp_positions)
+    read_length = snp_positions[-2]-snp_positions[1]+1
+    snp_positions = snp_positions[1:-1]-snp_positions[1]
+    
+    prob = 0.0
+    for idx_trans in range(0, len(snp_positions)-2):
+        prob += inference.likelihood_of_read(
+            read_length = read_length,
+            snp_positions_on_read = snp_positions,
+            idx_transitions = [idx_trans, idx_trans+1],
+            prob_CO = 0,
+            prob_GC_component = 1,
+            GC_tract_mean = GC_tract_mean,
+            GC_tract_mean2 = 1000,
+            recombination_rate_per_bp = 1e-8,
+        ) / (1e-8 * read_length)
+    
+    return prob
+
+
+
+def annotate_read_structure(
+    snps_filename,
+    sample_id,
+    chrom,
+    grch37_ref_starts_filename,
+    grch38_ref_starts_filename,
+    T2T_ref_starts_filename,
+    cov_hap1_parquet_filename,
+    cov_hap2_parquet_filename,
+    AA_hotspots_filename,
+    CL4_hotspots_filename,
+    GC_tract_mean = 30,
+    min_mapq = 60,
+    max_total_mismatches = 100,
+    max_total_clipping = 10,
+):
+    # Read SNPs
+    snps_df = pl.read_parquet(snps_filename)
+
+    AA_hotspots_df = pl.read_csv(
+        AA_hotspots_filename,
+        null_values="NA",
+    ).rename({
+        "Chromosome": "chrom", 
+        "Motif_Centre_Pos": "motif_center_pos",
+        "Start_Pos": "hotspot_start_pos",
+        "End_Pos": "hotspot_end_pos",    
+    })
+
+    CL4_hotspots_df = pl.read_csv(
+        CL4_hotspots_filename,
+        null_values="NA",
+        separator=" ",
+    ).rename({
+        "Chromosome": "chrom", 
+        "Motif_Centre_Pos": "motif_center_pos",
+        "Start_Pos": "hotspot_start_pos",
+        "End_Pos": "hotspot_end_pos",        
+    })
+
+    # Create reads dataframe
+    reads_df = (snps_df
+        .select(
+            "read_name", 
+            pl.col("read_length1").alias("read_length"), 
+            "mapq1", 
+            "mapq2", 
+            "is_forward1", 
+            "is_forward2", 
+            "total_mismatches", 
+            "num_common_insertions", 
+            "num_common_deletions", 
+            "total_clipping",
+        )
+        .unique()
+        .with_columns(
+            chrom = pl.lit(chrom), 
+            sample_id = pl.lit(sample_id),
+            grch37_chromosome_size_in_bp = pl.lit(grch37_chromosome_sizes_in_bp[chrom])
+        )
+    )
+
+    # Find minimal coverage across each haplotype
+    reads_df = (reads_df
+        .join(
+            pl.read_parquet(cov_hap1_parquet_filename).select("read_name", "min_coverage_hap1", "ref1_start"),
+            on="read_name",
+            how="left",
+        )
+        .join(
+            pl.read_parquet(cov_hap2_parquet_filename).select("read_name", "min_coverage_hap2", "ref2_start"),
+            on="read_name",
+            how="left",
+        )
+        .with_columns(
+            min_coverage_hap1 = pl.col("min_coverage_hap1").fill_null(0),
+            min_coverage_hap2 = pl.col("min_coverage_hap2").fill_null(0),
+        )
+    )
+
+    # Add SNP patterns
+    reads_df = (reads_df
+        .join(
+            (snps_df
+                .sort("read_name", "start")
+                .filter("is_high_quality_snp")
+                .group_by("read_name")
+                .agg(
+                    pl.col("start").alias("high_quality_snp_positions"),  
+                    pl.col("fits1_more").alias("high_quality_snp_positions_alleles"),
+                )
+            ),
+            on="read_name",
+            how="left",
+        )
+        .join(
+            (snps_df
+                .sort("read_name", "start")
+                .filter("is_mid_quality_snp")
+                .group_by("read_name")
+                .agg(
+                    pl.col("start").alias("mid_quality_snp_positions"),
+                    pl.col("fits1_more").alias("mid_quality_snp_positions_alleles"),
+                )
+            ),
+            on="read_name",
+            how="left",
+        )
+        .with_columns(
+            pl.col("mid_quality_snp_positions").fill_null([]),
+            pl.col("high_quality_snp_positions").fill_null([]),
+            pl.col("high_quality_snp_positions_alleles").fill_null([]),
+            pl.col("mid_quality_snp_positions_alleles").fill_null([]),
+        )
+    )
+
+    ### Add CO and NCO active intervals
+    reads_df = (reads_df
+        .with_columns(
+            CO_active_interval_start = pl.when(
+                pl.col("high_quality_snp_positions").list.len() >= 4,
+            ).then(
+                pl.col("high_quality_snp_positions").list.get(1)
+            ),
+            CO_active_interval_end = pl.when(
+                pl.col("high_quality_snp_positions").list.len() >= 4,
+            ).then(
+                pl.col("high_quality_snp_positions").list.get(-2)
+            ),
+            NCO_active_interval_start = pl.when(
+                pl.col("high_quality_snp_positions").list.len() >= 3,
+            ).then(
+                pl.col("high_quality_snp_positions").list.get(0)
+            ),
+            NCO_active_interval_end = pl.when(
+                pl.col("high_quality_snp_positions").list.len() >= 3,
+            ).then(
+                pl.col("high_quality_snp_positions").list.get(-1)
+            ),
+            mid_CO_active_interval_start = pl.when(
+                pl.col("mid_quality_snp_positions").list.len() >= 4,
+            ).then(
+                pl.col("mid_quality_snp_positions").list.get(1)
+            ),
+            mid_CO_active_interval_end = pl.when(
+                pl.col("mid_quality_snp_positions").list.len() >= 4,
+            ).then(
+                pl.col("mid_quality_snp_positions").list.get(-2)
+            ),
+            mid_NCO_active_interval_start = pl.when(
+                pl.col("mid_quality_snp_positions").list.len() >= 3,
+            ).then(
+                pl.col("mid_quality_snp_positions").list.get(0)
+            ),
+            mid_NCO_active_interval_end = pl.when(
+                pl.col("mid_quality_snp_positions").list.len() >= 3,
+            ).then(
+                pl.col("mid_quality_snp_positions").list.get(-1)
+            ),
+        )
+        .with_columns(
+            CO_active_interval_length_bp = pl.col("CO_active_interval_end") - pl.col("CO_active_interval_start"),
+            NCO_active_interval_length_bp = pl.col("NCO_active_interval_end") - pl.col("NCO_active_interval_start"),
+            mid_CO_active_interval_length_bp = pl.col("mid_CO_active_interval_end") - pl.col("mid_CO_active_interval_start"),
+            mid_NCO_active_interval_length_bp = pl.col("mid_NCO_active_interval_end") - pl.col("mid_NCO_active_interval_start"),
+        )
+    )
+
+    ### Add ref alignments
+    grch37_refs_df = (
+        pl.read_csv(
+            grch37_ref_starts_filename,
+            new_columns = ["read_name", "chrom", "grch37_reference_start"],
+            infer_schema_length=0,
+        )
+        .cast({"grch37_reference_start": pl.Int64})
+        .with_columns(
+            chrom = pl.concat_str([pl.lit("chr"), pl.col("chrom")]),
+        )
+    )
+
+    grch38_refs_df = (
+        pl.read_csv(
+            grch38_ref_starts_filename,
+            new_columns = ["read_name", "chrom", "grch38_reference_start"],
+            infer_schema_length=0,
+        )
+        .cast({"grch38_reference_start": pl.Int64})
+    )
+
+    T2T_refs_df = (
+        pl.read_csv(
+            T2T_ref_starts_filename,
+            new_columns = ["read_name", "chrom", "T2T_reference_start"],
+            infer_schema_length=0,
+        )
+        .cast({"T2T_reference_start": pl.Int64})
+    )
+
+    reads_df = (reads_df
+        .join(grch37_refs_df, on=["read_name", "chrom"], how="left")
+        .join(grch38_refs_df, on=["read_name", "chrom"], how="left")
+        .join(T2T_refs_df, on=["read_name", "chrom"], how="left")
+        .with_columns(
+            grch37_reference_end = pl.col("grch37_reference_start") + pl.col("read_length"),
+            grch38_reference_end = pl.col("grch38_reference_start") + pl.col("read_length"),
+            T2T_reference_end = pl.col("T2T_reference_start") + pl.col("read_length"),
+        )
+    )
+
+    ### Add cM
+    rate_map = rate_maps[chrom]
+    reads_df = (reads_df
+        .with_columns(
+            grch37_reference_start_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"]) * 1e2,
+            grch37_reference_end_cM = rate_map.get_cumulative_mass(
+                np.minimum(rate_map.right[-1]-1, reads_df["grch37_reference_start"] + reads_df["read_length"]),
+                ) * 1e2,
+            CO_active_interval_start_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["CO_active_interval_start"]) * 1e2,
+            CO_active_interval_end_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["CO_active_interval_end"]) * 1e2,
+            NCO_active_interval_start_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["NCO_active_interval_start"]) * 1e2,
+            NCO_active_interval_end_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["NCO_active_interval_end"]) * 1e2,
+            mid_CO_active_interval_start_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["mid_CO_active_interval_start"]) * 1e2,
+            mid_CO_active_interval_end_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["mid_CO_active_interval_end"]) * 1e2,
+            mid_NCO_active_interval_start_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["mid_NCO_active_interval_start"]) * 1e2,
+            mid_NCO_active_interval_end_cM = rate_map.get_cumulative_mass(reads_df["grch37_reference_start"] + reads_df["mid_NCO_active_interval_end"]) * 1e2,
+        )
+        .with_columns(
+            full_read_crossover_prob = (pl.col("grch37_reference_end_cM") - pl.col("grch37_reference_start_cM")) * 0.01,
+            CO_active_interval_crossover_prob = (pl.col("CO_active_interval_end_cM") - pl.col("CO_active_interval_start_cM")) * 0.01,
+            NCO_active_interval_crossover_prob = (pl.col("NCO_active_interval_end_cM") - pl.col("NCO_active_interval_start_cM")) * 0.01,
+            mid_CO_active_interval_crossover_prob = (pl.col("mid_CO_active_interval_end_cM") - pl.col("mid_CO_active_interval_start_cM")) * 0.01,
+            mid_NCO_active_interval_crossover_prob = (pl.col("mid_NCO_active_interval_end_cM") - pl.col("mid_NCO_active_interval_start_cM")) * 0.01,
+        )
+        .fill_nan(None)
+    )
+
+    ### Add detection probabilities
+    CO_prob_detection_full_read_df = (reads_df
+        .select("read_name", "read_length", "high_quality_snp_positions")
+        .map_rows(lambda row: (row[0], crossover_prob_detection_full_read(row[1], row[2], GC_tract_mean)))
+        .rename({
+            "column_0": "read_name",
+            "column_1": "CO_prob_detection_full_read",
+        })
+    )
+
+    # These should all be 1 or 0
+    CO_prob_detection_CO_active_interval_df = (reads_df
+        .select("read_name", "read_length", "high_quality_snp_positions")
+        .map_rows(lambda row: (row[0], crossover_prob_detection_in_crossover_active_interval(row[1], row[2], GC_tract_mean)))
+        .rename({
+            "column_0": "read_name",
+            "column_1": "CO_prob_detection_in_CO_active_interval",
+        })
+    )
+
+    NCO_prob_detection_full_read_df = (reads_df
+        .select("read_name", "read_length", "high_quality_snp_positions")
+        .map_rows(lambda row: (row[0], noncrossover_prob_detection_full_read(row[1], row[2], GC_tract_mean)))
+        .rename({
+            "column_0": "read_name",
+            "column_1": "NCO_prob_detection_full_read",
+        })
+    )
+
+    NCO_prob_detection_NCO_active_region_df = (reads_df
+        .select("read_name", "read_length", "high_quality_snp_positions")
+        .map_rows(lambda row: (row[0], noncrossover_prob_detection_in_noncrossover_active_interval(row[1], row[2], GC_tract_mean)))
+        .rename({
+            "column_0": "read_name",
+            "column_1": "NCO_prob_detection_in_NCO_active_interval",
+        })
+    )
+
+    NCO_prob_detection_CO_active_region_df = (reads_df
+        .select("read_name", "read_length", "high_quality_snp_positions")
+        .map_rows(lambda row: (row[0], noncrossover_prob_detection_in_crossover_active_interval(row[1], row[2], GC_tract_mean)))
+        .rename({
+            "column_0": "read_name",
+            "column_1": "NCO_prob_detection_in_CO_active_interval",
+        })
+    )      
+
+    reads_df = (reads_df
+        .join(CO_prob_detection_full_read_df, on="read_name", how="left")
+        .join(NCO_prob_detection_full_read_df, on="read_name", how="left")
+        .join(CO_prob_detection_CO_active_interval_df, on="read_name", how="left")
+        .join(NCO_prob_detection_NCO_active_region_df, on="read_name", how="left")
+        .join(NCO_prob_detection_CO_active_region_df, on="read_name", how="left")
+    )
+
+    ### Add AA hotspots
+    AA_hotspots_df = (AA_hotspots_df
+        .filter(pl.col("chrom") == chrom)
+        .sort("motif_center_pos")
+        .set_sorted("motif_center_pos")
+    )
+    
+    AA_possible_hits = (reads_df
+        .select("read_name", "grch38_reference_start", "grch38_reference_end")
+        .sort("grch38_reference_start")
+        .set_sorted("grch38_reference_start")
+        .join_asof(
+            AA_hotspots_df.select(
+                AA_motif_center_pos=pl.col("motif_center_pos"), 
+                AA_heat=pl.col("heat"),
+                AA_motif_strand=pl.col("motif_strand"),
+            ),
+            left_on="grch38_reference_start",
+            right_on="AA_motif_center_pos",
+            strategy="forward",
+        )
+        .filter((pl.col("AA_motif_center_pos") >= pl.col("grch38_reference_start")) & 
+                (pl.col("AA_motif_center_pos") < pl.col("grch38_reference_end")))
+        .select("read_name", "AA_motif_center_pos", "AA_heat", "AA_motif_strand")
+    )
+    
+    reads_df = (reads_df
+        .join(
+            AA_possible_hits, 
+            on="read_name",
+            how="left",
+        )
+    )
+
+    ### Add CL4 hotspots
+    CL4_hotspots_df = (CL4_hotspots_df
+        .filter(pl.col("chrom") == chrom)
+        .sort("motif_center_pos")
+        .set_sorted("motif_center_pos")
+    )
+    
+    CL4_possible_hits = (reads_df
+        .select("read_name", "grch38_reference_start", "grch38_reference_end")
+        .sort("grch38_reference_start")
+        .set_sorted("grch38_reference_start")
+        .join_asof(
+            CL4_hotspots_df.select(
+                CL4_motif_center_pos=pl.col("motif_center_pos"), 
+                CL4_heat=pl.col("heat"),
+                CL4_motif_strand=pl.col("motif_strand"),
+            ),
+            left_on="grch38_reference_start",
+            right_on="CL4_motif_center_pos",
+            strategy="forward",
+        )
+        .filter((pl.col("CL4_motif_center_pos") >= pl.col("grch38_reference_start")) & 
+                (pl.col("CL4_motif_center_pos") < pl.col("grch38_reference_end")))
+        .select("read_name", "CL4_motif_center_pos", "CL4_heat", "CL4_motif_strand")
+    )
+    
+    reads_df = (reads_df
+        .join(
+            CL4_possible_hits, 
+            on="read_name",
+            how="left",
+        )
+    )
+
+    ### Add read quality
+    reads_df = (reads_df
+        .with_columns(
+            is_high_quality_read = (
+                (pl.col("mapq1") >= min_mapq) & \
+                (pl.col("mapq2") >= min_mapq) & \
+                (pl.col("is_forward1") == pl.col("is_forward2")) & \
+                (pl.col("total_mismatches") <= max_total_mismatches) & \
+                (pl.col("total_clipping") <= max_total_clipping)
+            )
+        )
+    )
+
+    return reads_df

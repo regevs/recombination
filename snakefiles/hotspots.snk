@@ -1,171 +1,207 @@
-# Rule to filter only the reads needed from bam file
-rule filter_candidate_reads_from_bam_grch37:
-    input:
-        bam = root_path / "02.results/01.read_alignment/01.ccs/01.grch37" / "{focal_sample_id}" / \
-            "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
-        candidates_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.parquet",
-    output:
-        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.read_names_grch37.txt",
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch37.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch37.bam.bai",
-    threads: 8
-    run:
-        # Create a filename with all the candidate read names
-        pl.read_parquet(input.candidates_parquet).select("read_name").write_csv(output.read_names, include_header=False)
+# # Rule to filter only the reads needed from bam file
+# rule filter_candidate_reads_from_bam_grch37:
+#     input:
+#         bam = root_path / "02.results/01.read_alignment/01.ccs/01.grch37" / "{focal_sample_id}" / \
+#             "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+#         candidates_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.parquet",
+#     output:
+#         read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.read_names_grch37.txt",
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch37.bam",
+#         bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch37.bam.bai",
+#     threads: 8
+#     run:
+#         # Create a filename with all the candidate read names
+#         pl.read_parquet(input.candidates_parquet).select("read_name").write_csv(output.read_names, include_header=False)
 
-        chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
+#         chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
 
-        # Get just those reads
-        shell(
-            "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
-            "{samtools_path} sort > {output.bam}"
-        )
+#         # Get just those reads
+#         shell(
+#             "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
+#             "{samtools_path} sort > {output.bam}"
+#         )
 
-        # Index the bam file
-        shell("{samtools_path} index {output.bam}")
+#         # Index the bam file
+#         shell("{samtools_path} index {output.bam}")
 
-# Rule to filter only the reads needed from bam file
-rule filter_candidate_reads_from_bam_grch38:
-    input:
-        bam = root_path / "02.results/01.read_alignment/01.ccs/02.grch38" / "{focal_sample_id}" / \
-            "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
-        candidates_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.parquet",
-    output:
-        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.read_names_grch38.txt",
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch38.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch38.bam.bai",
-    threads: 8
-    run:
-        # Create a filename with all the candidate read names
-        pl.read_parquet(input.candidates_parquet).select("read_name").write_csv(output.read_names, include_header=False)
+# # Rule to filter only the reads needed from bam file
+# rule filter_candidate_reads_from_bam_grch38:
+#     input:
+#         bam = root_path / "02.results/01.read_alignment/01.ccs/02.grch38" / "{focal_sample_id}" / \
+#             "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+#         candidates_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.parquet",
+#     output:
+#         read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.read_names_grch38.txt",
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch38.bam",
+#         bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_grch38.bam.bai",
+#     threads: 8
+#     run:
+#         # Create a filename with all the candidate read names
+#         pl.read_parquet(input.candidates_parquet).select("read_name").write_csv(output.read_names, include_header=False)
 
-        chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
+#         chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "")
 
-        # Get just those reads
-        shell(
-            "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
-            "{samtools_path} sort > {output.bam}"
-        )
+#         # Get just those reads
+#         shell(
+#             "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
+#             "{samtools_path} sort > {output.bam}"
+#         )
 
-        # Index the bam file
-        shell("{samtools_path} index {output.bam}")        
+#         # Index the bam file
+#         shell("{samtools_path} index {output.bam}")        
 
-rule filter_candidate_reads_from_bam_T2T:
-    input:
-        bam = root_path / "02.results/01.read_alignment/01.ccs/03.T2T-CHM13" / "{focal_sample_id}" / \
-            "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
-        candidates_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.parquet",
-    output:
-        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.read_names_T2T.txt",
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_T2T.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_T2T.bam.bai",
-    threads: 8
-    run:
-        # Create a filename with all the candidate read names
-        pl.read_parquet(input.candidates_parquet).select("read_name").write_csv(output.read_names, include_header=False)
+# rule filter_candidate_reads_from_bam_T2T:
+#     input:
+#         bam = root_path / "02.results/01.read_alignment/01.ccs/03.T2T-CHM13" / "{focal_sample_id}" / \
+#             "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+#         candidates_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.parquet",
+#     output:
+#         read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.read_names_T2T.txt",
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_T2T.bam",
+#         bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.candidate_reads.aligned_to_T2T.bam.bai",
+#     threads: 8
+#     run:
+#         # Create a filename with all the candidate read names
+#         pl.read_parquet(input.candidates_parquet).select("read_name").write_csv(output.read_names, include_header=False)
 
-        chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "")
+#         chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "")
 
-        # Get just those reads
-        shell(
-            "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
-            "{samtools_path} sort > {output.bam}"
-        )
+#         # Get just those reads
+#         shell(
+#             "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
+#             "{samtools_path} sort > {output.bam}"
+#         )
 
-        # Index the bam file
-        shell("{samtools_path} index {output.bam}")    
+#         # Index the bam file
+#         shell("{samtools_path} index {output.bam}")    
 
 
-# Rule to filter a bunch of random reads needed from bam file
-rule filter_random_reads_from_bam_grch37:
-    input:
-        bam = root_path / "02.results/01.read_alignment/01.ccs/01.grch37" / "{focal_sample_id}" / \
-            "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
-        all_reads = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.parquet",
-    output:
-        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.read_names_grch37.txt",
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch37.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch37.bam.bai",
-    threads: 8
-    run:
-        # Create a filename with all the candidate read names
-        pl.read_parquet(input.all_reads).select("read_name").sample(1000, seed=42).write_csv(output.read_names, include_header=False)
+# # Rule to filter a bunch of random reads needed from bam file
+# rule filter_random_reads_from_bam_grch37:
+#     input:
+#         bam = root_path / "02.results/01.read_alignment/01.ccs/01.grch37" / "{focal_sample_id}" / \
+#             "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+#         all_reads = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.parquet",
+#     output:
+#         read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.read_names_grch37.txt",
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch37.bam",
+#         bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch37.bam.bai",
+#     threads: 8
+#     run:
+#         # Create a filename with all the candidate read names
+#         pl.read_parquet(input.all_reads).select("read_name").sample(1000, seed=42).write_csv(output.read_names, include_header=False)
 
-        chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
+#         chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
 
-        # Get just those reads
-        shell(
-            "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
-            "{samtools_path} sort > {output.bam}"
-        )
+#         # Get just those reads
+#         shell(
+#             "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
+#             "{samtools_path} sort > {output.bam}"
+#         )
 
-        # Index the bam file
-        shell("{samtools_path} index {output.bam}")   
+#         # Index the bam file
+#         shell("{samtools_path} index {output.bam}")   
 
-rule filter_random_reads_from_bam_grch38:
-    input:
-        bam = root_path / "02.results/01.read_alignment/01.ccs/02.grch38" / "{focal_sample_id}" / \
-            "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
-        all_reads = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.parquet",
-    output:
-        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.read_names_grch38.txt",
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch38.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch38.bam.bai",
-    threads: 8
-    run:
-        # Create a filename with all the candidate read names
-        pl.read_parquet(input.all_reads).select("read_name").sample(1000, seed=42).write_csv(output.read_names, include_header=False)
+# rule filter_random_reads_from_bam_grch37_more:
+#     input:
+#         bam = root_path / "02.results/01.read_alignment/01.ccs/01.grch37" / "{focal_sample_id}" / \
+#             "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+#         all_reads = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.parquet",
+#     output:
+#         read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.1e5_random_reads.read_names_grch37.txt",
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.1e5_random_reads.aligned_to_grch37.bam",
+#         bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.1e5_random_reads.aligned_to_grch37.bam.bai",
+#     resources:
+#         mem_mb = 16000,
+#     threads: 8
+#     run:
+#         # Create a filename with all the candidate read names
+#         df = pl.read_parquet(input.all_reads)
+#         df.select("read_name").sample(min(len(df), 100000), seed=42).write_csv(output.read_names, include_header=False)
 
-        chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
+#         chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "").replace("chr", "")
 
-        # Get just those reads
-        shell(
-            "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
-            "{samtools_path} sort > {output.bam}"
-        )
+#         # Get just those reads
+#         shell(
+#             "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
+#             "{samtools_path} sort > {output.bam}"
+#         )
 
-        # Index the bam file
-        shell("{samtools_path} index {output.bam}")                 
+#         # Index the bam file
+#         shell("{samtools_path} index {output.bam}")         
 
-rule filter_candidate_reads_from_bam_final:
-    input:
-        [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.random_reads.aligned_to_grch37.bam") \
-            for focal_sample_id in sample_ids
-            for chrom in aut_chrom_names_ragtag] + \
-        [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.random_reads.aligned_to_grch38.bam") \
-            for focal_sample_id in sample_ids
-            for chrom in aut_chrom_names_ragtag] + \ 
-        [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.candidate_reads.aligned_to_grch37.bam") \
-            for focal_sample_id in sample_ids
-            for chrom in aut_chrom_names_ragtag] + \
-        [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.candidate_reads.aligned_to_grch38.bam") \
-            for focal_sample_id in sample_ids
-            for chrom in aut_chrom_names_ragtag] + \
-        [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.candidate_reads.aligned_to_T2T.bam") \
-            for focal_sample_id in sample_ids
-            for chrom in aut_chrom_names_ragtag]
+# rule filter_random_reads_from_bam_grch38:
+#     input:
+#         bam = root_path / "02.results/01.read_alignment/01.ccs/02.grch38" / "{focal_sample_id}" / \
+#             "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+#         all_reads = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.parquet",
+#     output:
+#         read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.read_names_grch38.txt",
+#         bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch38.bam",
+#         bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.random_reads.aligned_to_grch38.bam.bai",
+#     threads: 8
+#     run:
+#         # Create a filename with all the candidate read names
+#         pl.read_parquet(input.all_reads).select("read_name").sample(1000, seed=42).write_csv(output.read_names, include_header=False)
+
+#         chrom_no_ragtag = wildcards.chrom.replace("_RagTag", "")
+
+#         # Get just those reads
+#         shell(
+#             "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} {chrom_no_ragtag} | "
+#             "{samtools_path} sort > {output.bam}"
+#         )
+
+#         # Index the bam file
+#         shell("{samtools_path} index {output.bam}")                 
+
+# rule filter_candidate_reads_from_bam_final:
+#     input:
+#         [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.random_reads.aligned_to_grch37.bam") \
+#             for focal_sample_id in sample_ids
+#             for chrom in aut_chrom_names_ragtag] + \
+#         [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.1e5_random_reads.aligned_to_grch37.bam") \
+#             for focal_sample_id in sample_ids
+#             for chrom in aut_chrom_names_ragtag] + \
+#         [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.random_reads.aligned_to_grch38.bam") \
+#             for focal_sample_id in sample_ids
+#             for chrom in aut_chrom_names_ragtag] + \ 
+#         [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.candidate_reads.aligned_to_grch37.bam") \
+#             for focal_sample_id in sample_ids
+#             for chrom in aut_chrom_names_ragtag] + \
+#         [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.candidate_reads.aligned_to_grch38.bam") \
+#             for focal_sample_id in sample_ids
+#             for chrom in aut_chrom_names_ragtag] + \
+#         [(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#             / f"{focal_sample_id}" / "reads" / f"{chrom}.certainty_0.95.candidate_reads.aligned_to_T2T.bam") \
+#             for focal_sample_id in sample_ids
+#             for chrom in aut_chrom_names_ragtag]

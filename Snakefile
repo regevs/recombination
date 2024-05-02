@@ -17,7 +17,7 @@ import himut
 import himut.bamlib
 import himut.phaselib
 
-from src import liftover, annotate, diagnostics, dashboard, inference
+from src import liftover, annotate, diagnostics, dashboard, inference, blacklists
 
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
@@ -33,7 +33,7 @@ samtools_path = "/nfs/users/nfs_r/rs42/rs42/software/samtools-1.18/samtools"
 bcftools_path = "/nfs/users/nfs_r/rs42/rs42/software/bcftools-1.18/bcftools"
 trf_path = "/nfs/users/nfs_r/rs42/rs42/software/trf409.linux64"
 ragtag_path = "ragtag.py"
-deepvariant_command = "/software/singularity-v3.9.0/bin/singularity exec -B /lustre /lustre/scratch126/casm/team154pc/sl17/01.himut/02.results/02.germline_mutations/deepvariant.simg"
+#deepvariant_command = "/software/singularity-v3.9.0/bin/singularity exec -B /lustre /lustre/scratch126/casm/team154pc/sl17/01.himut/02.results/02.germline_mutations/deepvariant.simg"
 sdust_path = "/nfs/users/nfs_r/rs42/rs42/git/sdust/sdust"
 
 # Data paths
@@ -85,7 +85,8 @@ include: "snakefiles/read_analysis.snk"
 include: "snakefiles/tandem_repeats.snk"
 #include: "snakefiles/nahr.snk"
 include: "snakefiles/inference.snk"
-include: "snakefiles/hotspots.snk"
+# include: "snakefiles/hotspots.snk"
+include: "snakefiles/prdm9.snk"
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Mapping to haplotypes
@@ -231,64 +232,6 @@ rule minimap2_to_haplotype_final:
 
 
 
-
-
-
-rule minimap2_to_haplotype_unscaffolded:
-    input:
-        reference_fasta = denovo_hap_func,
-        fastq_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
-            / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz",
-    output:
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "{focal_sample_id}.unscaffolded.hap{haplotype}.minimap2.sorted.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "{focal_sample_id}.unscaffolded.hap{haplotype}.minimap2.sorted.bam.bai",
-    threads: 32,
-    resources:
-        mem_mb=50000,
-    run:
-        shell(
-            "{minimap2_path} "
-            "-R \"@RG\\tID:{wildcards.focal_sample_id}\\tPL:PACBIO\\tSM:{wildcards.focal_sample_id}\\tPU:{wildcards.focal_sample_id}\\tPM:SEQUEL\" "
-            "-t {threads} "
-            "-ax map-hifi --cs=short --eqx --MD "
-            "{input.reference_fasta} "
-            "{input.fastq_gz} "
-            "| {samtools_path} sort -o {output.bam}"
-        )
-
-        shell(
-            "{samtools_path} index {output.bam}"
-        )
-        
-rule filter_bam_for_primary_unscaffolded:
-    input:
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "{focal_sample_id}.unscaffolded.hap{haplotype}.minimap2.sorted.bam",
-    output:
-        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "{focal_sample_id}.unscaffolded.hap{haplotype}.minimap2.sorted.primary_alignments.bam",
-        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / "{focal_sample_id}" / "{focal_sample_id}.unscaffolded.hap{haplotype}.minimap2.sorted.primary_alignments.bam.bai",
-    threads: 16
-    run:
-        # 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
-        shell(
-            "{samtools_path} view -@ {threads} -bh -F 0x900 {input.bam} > {output.bam}"
-        )
-
-        shell(
-            "{samtools_path} index -@ {threads} {output.bam}"
-        )
-
-
-rule minimap2_to_haplotype_unscaffolded_final:
-    input:
-        [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
-            / f"{focal_sample_id}" / f"{focal_sample_id}.unscaffolded.hap{haplotype}.minimap2.sorted.primary_alignments.bam" \
-            for focal_sample_id in sample_ids \
-            for haplotype in [1,2]]
 
 
 rule minimap2_to_T2T:
@@ -456,3 +399,24 @@ rule minimap2_to_grch38_final:
         [Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/02.grch38/") \
             / f"{focal_sample_id}" / f"{focal_sample_id}.minimap2.sorted.primary_alignments.bam" \
             for focal_sample_id in sample_ids]                        
+
+rule extract_ref_starts_from_bam:
+    input:
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/{ref}/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.primary_alignments.bam",
+        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/{ref}/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.primary_alignments.bam.bai",
+    output:
+        csv = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/{ref}/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.primary_alignments.ref_starts.csv.gz",
+    run:
+        shell(
+           "{samtools_path} view {input.bam} | awk '{{print $1 \",\" $3 \",\" $4}}' | gzip > {output.csv}"
+        )
+
+rule extract_ref_starts_from_bam_final:
+    input:
+        csv = [str(Path(f"/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/{ref}/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.minimap2.sorted.primary_alignments.ref_starts.csv.gz") \
+            for ref in ["01.grch37", "02.grch38", "03.T2T-CHM13"]
+            for focal_sample_id in sample_ids]  

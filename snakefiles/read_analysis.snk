@@ -59,11 +59,7 @@ rule create_high_conf_snps:
     run:
         # Create SNPs dataframe
         events_df = pl.read_parquet(input.refinement_parquet)
-        events_df = diagnostics.filter_read_refinements(
-            events_df,
-#            min_mapq = 60,
-#            max_total_mismatches = 100000,
-        )
+        events_df = diagnostics.filter_read_refinements(events_df)
 
         print("Done filter_read_refinements")
 
@@ -111,19 +107,18 @@ rule create_high_conf_snps:
             read_trimming = 500,
         )
 
-        annotated_events_df = annotated_events_df.collect(streaming=True).lazy()
+        annotated_events_df = annotated_events_df.collect(streaming=True)
         print("Done add_high_confidence_annotation")
 
         # Write
-        annotated_events_df = annotated_events_df.collect(streaming=True)
         annotated_events_df.write_parquet(output.parquet)
 
 rule create_high_conf_snps_all:
     input:
         parquet = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
                     / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.high_confidence_snps.parquet") \
-            for focal_sample_id in sample_ids \
-            for chrom in aut_chrom_names] 
+            for focal_sample_id in sample_ids[:1] \
+            for chrom in aut_chrom_names[:1]] 
 
 # ------------------------------------------------------------------------------------------------------------------------
 # 3. Phase and haplotag according to high confidence SNPs
@@ -183,13 +178,29 @@ rule calculate_genome_coverage_on_haplotype:
             "{bedtools_path} genomecov -ibam - -bg > {output.bedgraph}"
         )
 
+# rule intersect_coverage_two_haplotypes:
+#     input:
+#         bedgraph1 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#                     / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap1.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#         bedgraph2 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#                     / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap2.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#     output:
+#         bedgraph = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#                     / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hapintersection.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#     resources:
+#         mem_mb=4000,
+#     run:
+#         shell(
+#             "{bedtools_path} intersect -a {input.bedgraph1} -b {input.bedgraph2} -wo > {output.bedgraph}"
+#         )
+
 rule phase_and_haplotag_final:
     input:
         bam = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
             / f"{focal_sample_id}" / f"{focal_sample_id}.{chrom}_RagTag.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph") \
                 for focal_sample_id in sample_ids \
                 for chrom in aut_chrom_names \
-                for haplotype in [1,2] \
+                for haplotype in ["1" ,"2", "intersection"] \
                 for certainty in [0.95]]
 
 
@@ -234,12 +245,27 @@ rule further_annotate_snps:
             pl.col("is_interesting_event"),
         )
 
+        # Add allele coverage annotation
+        annotated_snps_df = diagnostics.add_allele_coverage_annotation(
+            annotated_snps_df,
+            (
+                (pl.col("mapq1") >= 60) & \
+                (pl.col("mapq2") >= 60) & \
+                (pl.col("is_forward1") == pl.col("is_forward2")) & \
+                (pl.col("total_mismatches") <= 100) & \
+                (pl.col("total_clipping") <= 10)
+            )
+        )
+        print("Done add_allele_coverage_annotation")
+
+
         # Add high-quality status annotation
         annotated_snps_df = diagnostics.add_high_quality_annotation(
             annotated_snps_df, 
             input_column_prefix = "is_high_conf",
             output_column_prefix = "is_high_quality",
             phased_coverage_min = 3,
+            allele_coverage_min = 3,
         )
 
         # Add mid-quality status annotation
@@ -248,9 +274,17 @@ rule further_annotate_snps:
             input_column_prefix = "is_mid_conf",
             output_column_prefix = "is_mid_quality",
             phased_coverage_min = 3,
+            allele_coverage_min = 3,
         )
 
         annotated_snps_df.write_parquet(output.parquet)        
+
+rule further_annotate_snps_final:
+    input:
+        parquet = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+                    / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.certainty_0.95.snps.parquet") \
+            for focal_sample_id in sample_ids[:1] \
+            for chrom in aut_chrom_names[:1]] 
 
 
 rule coverage_for_all_events:
@@ -354,6 +388,81 @@ rule coverage_for_all_events_all:
                 for chrom in ["chr2"] \
                 for haplotype in [1,2] \
                 for certainty in [0.95]]
+
+
+rule coverage_for_all_reads:
+    input:
+        events_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.read_refinement.parquet",
+        bedgraph = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap{haplotype}.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+    output:
+        cov_bed = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.hap{haplotype}.coverage_refinement.bed",
+        intersect_bed = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.hap{haplotype}.intersect.bed",
+        cov_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.hap{haplotype}.coverage_refinement.parquet",
+    resources:
+        mem_mb = 16000,
+    run:
+        coverage_col = f"min_coverage_hap{wildcards.haplotype}"
+        events_df = pl.scan_parquet(input.events_parquet)
+        
+        # Take the read starts and ends
+        cov_df = (events_df
+            .select(["read_name", f"ref{wildcards.haplotype}_start", f"ref{wildcards.haplotype}_end"])
+            .group_by("read_name")
+            .agg(
+                pl.col(f"ref{wildcards.haplotype}_start").min(),
+                pl.col(f"ref{wildcards.haplotype}_end").max(),
+            )
+        ).collect()
+
+        # Write a bed file for processing with bedtools
+        (cov_df
+            .select([
+                pl.lit(wildcards.chrom).alias("chrom"), 
+                pl.col(f"ref{wildcards.haplotype}_start"),
+                pl.col(f"ref{wildcards.haplotype}_end"),
+                "read_name",
+            ])
+            .filter(pl.col(f"ref{wildcards.haplotype}_start") < pl.col(f"ref{wildcards.haplotype}_end"))
+            .write_csv(
+                output.cov_bed,
+                separator = "\t",
+                include_header = False,
+            )
+        )
+
+        # Find the intersection to the coverage; set the coverage to 0 artifically when there is no overlap
+        shell(
+            "{bedtools_path} intersect "
+            "-a {output.cov_bed} "
+            "-b {input.bedgraph} "
+            "-wao -bed | "
+            "awk -v OFS='\t' -F'\t' '{{ if ($9 == 0) $8 = 0; print }}' | "
+            "{bedtools_path} groupby -i stdin -g 1,2,3,4 -c 8 -o min "
+            " > {output.intersect_bed}"
+        )
+        
+        # Write to parquet
+        pl.read_csv(
+            output.intersect_bed,            
+            new_columns = ["chrom", f"ref{wildcards.haplotype}_start", f"ref{wildcards.haplotype}_end", "read_name", coverage_col],
+            has_header = False,
+            separator = "\t",
+        ).write_parquet(output.cov_parquet)
+
+rule coverage_for_all_reads_all:
+    input:
+        cov_bed = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.certainty_{certainty}.all_reads.hap{haplotype}.coverage_refinement.bed") 
+                for focal_sample_id in sample_ids \
+                for chrom in aut_chrom_names \
+                for haplotype in [1,2] \
+                for certainty in [0.95]]
+
 
 
 # ------------------------------------------------------------------------------------------------------------------------
@@ -469,11 +578,26 @@ rule classify_reads:
     resources: 
         mem_mb = 4000,
     run:
+        # TODO: Parameterize better
+        basic_filtering = \
+            (~pl.col("has_common_transition")) & \
+            (pl.col("min_coverage_between_transitions_hap1") >= 3) & \
+            (pl.col("min_coverage_between_transitions_hap2") >= 3) & \
+            (pl.col("mapq1") >= 60) & \
+            (pl.col("mapq2") >= 60) & \
+            (pl.col("is_forward1") == pl.col("is_forward2"))
+
+        extra_filtering = \
+            (pl.col("total_mismatches") <= 100) & \
+            (pl.col("total_clipping") <= 10) & \
+            (~pl.col("read_name").is_in(blacklists.NCO_read_blacklist))
+            
         res_df = diagnostics.classify_all_reads(
             pl.read_parquet(input.events_parquet),
             pl.read_parquet(input.candidate_reads_parquet),
             pl.read_parquet(input.cov1_parquet),
             pl.read_parquet(input.cov2_parquet),
+            basic_filtering & extra_filtering,           
         )
     
         res_df = res_df.with_columns(
@@ -490,3 +614,54 @@ rule classify_reads_final:
             for focal_sample_id in sample_ids
             for chrom in aut_chrom_names]
 
+# ------------------------------------------------------------------------------------------------------------------------
+# 7. Annotate all reads structure for analysis
+#
+rule annotate_all_reads_structure:
+    input:
+        parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.snps.parquet",
+        csv_grch37 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/01.grch37/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.primary_alignments.ref_starts.csv.gz",            
+        csv_grch38 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/02.grch38/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.primary_alignments.ref_starts.csv.gz",
+        csv_T2T = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.primary_alignments.ref_starts.csv.gz",
+        cov_hap1_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.hap1.coverage_refinement.parquet",
+        cov_hap2_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads.hap2.coverage_refinement.parquet",    
+        AA_hotspots = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/06.hotspots/hinch_2023_AA_hotspots.csv",
+        CL4_hotspots = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/06.hotspots/hinch_2023_CL4_hotspots.csv",            
+    output:
+        all_parquet = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "reads" / "{chrom}.certainty_{certainty}.all_reads_structure_annotated.parquet",
+    resources:
+        time_min = 10,
+        mem_mb = 8000,
+    run:
+        reads_df = annotate.annotate_read_structure(
+            input.parquet,
+            wildcards.focal_sample_id,
+            wildcards.chrom.replace("_RagTag", ""),
+            input.csv_grch37,
+            input.csv_grch38,
+            input.csv_T2T,
+            input.cov_hap1_parquet,
+            input.cov_hap2_parquet,
+            input.AA_hotspots,
+            input.CL4_hotspots,
+            GC_tract_mean = 30,
+            min_mapq = 60,
+            max_total_mismatches = 100,
+            max_total_clipping = 10,
+        )
+
+        reads_df.write_parquet(output.all_parquet)
+
+rule annotate_all_reads_structure_final:
+    input:
+        all_parquet = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.certainty_0.95.all_reads_structure_annotated.parquet") \
+            for focal_sample_id in sample_ids
+            for chrom in aut_chrom_names]
