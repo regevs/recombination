@@ -17,7 +17,7 @@ import himut
 import himut.bamlib
 import himut.phaselib
 
-from src import liftover, annotate, diagnostics, dashboard, inference, blacklists
+from src import liftover, annotate, diagnostics, dashboard, inference, IDs
 
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
@@ -26,6 +26,7 @@ aut_chrom_names_ragtag = [x + "_RagTag" for x in aut_chrom_names]
 chrom_names_ragtag = [x + "_RagTag" for x in chrom_names]
 
 # Binaries
+hifiasm_path = "/nfs/users/nfs_r/rs42/rs42/software/hifiasm/hifiasm"
 bedtools_path = "/nfs/users/nfs_r/rs42/rs42/software/bedtools"
 minimap2_path = "/nfs/users/nfs_r/rs42/rs42/software/minimap2-2.26_x64-linux/minimap2"
 minidot_path = "/nfs/users/nfs_r/rs42/rs42/git/miniasm/minidot"
@@ -45,48 +46,80 @@ hap_scaffolds_path = root_path / "01.data/05.ragtag/03.haplotype_specific_scaffo
 t2t_hapfusion_output_path = root_path / "02.results/01.read_alignment/01.ccs/03.T2T-CHM13"
 hg19_hapfusion_output_path = root_path / "02.results/01.read_alignment/01.ccs/01.grch37"
 
-# Samples to do
-sample_ids = [
-    "PD50477f",
-    # "PD50508bf", -- ignore; merged two sampling dates just for phasing, but should be analyzed separately
-    "PD50519d",
-    # "PD47269d", -- don't use, not there
-    "PD50508f",
-    # "PD50511e", -- don't use, likely mixture
-    "PD50523b",
-    # "PD48473b", -- don't use, not there
-    "PD50521b",
-    "PD50508b",
-    # "PD50521be", -- ignore; merged two sampling dates just for phasing, but should be analyzed separately
-    "PD46180c",
-    # "PD50502f", -- don't use, likely mixture
-    "PD50521e",
-    # "PD50511e_SS",  --- don't use
-    "PD50489e",
-]
-
-sample_id_to_joint_id = {
-    "PD50477f": "PD50477f",
-    "PD50519d": "PD50519d",
-    "PD50508f": "PD50508bf",
-    "PD50523b": "PD50523b",
-    "PD50521b": "PD50521be",
-    "PD50508b": "PD50508bf",
-    "PD46180c": "PD46180c",
-    "PD50521e": "PD50521be",
-    "PD50489e": "PD50489e",
-}
-
+sample_ids = IDs.sample_ids
+if "sample_ids" in config.keys():
+    sample_ids = config["sample_ids"].split(",")
+    
+sample_id_to_joint_id = IDs.sample_id_to_joint_id
+sample_to_params = IDs.sample_to_params
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Import other rules
 #
 include: "snakefiles/read_analysis.snk"
 include: "snakefiles/tandem_repeats.snk"
-#include: "snakefiles/nahr.snk"
 include: "snakefiles/inference.snk"
-# include: "snakefiles/hotspots.snk"
 include: "snakefiles/prdm9.snk"
+include: "snakefiles/tract_length.snk"
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Assembly
+#
+
+rule merge_and_index_fastq:
+    input:
+        gz_dir = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
+            / "{focal_sample_id}",
+    output:
+        fastq_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz",
+        fastq_gz_fxi = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz.fxi",
+    resources:
+        mem_mb=16000,
+    run:
+        shell("cat {input.gz_dir}/m*filtered*.fastq.gz > {output.fastq_gz}")
+        shell("rm -f {output.fastq_gz_fxi}")
+        shell("pyfastx index {output.fastq_gz}")
+
+rule merge_and_index_fastq_final:
+    input:
+        [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.ccs.filtered.fastq.gz") \ 
+            for focal_sample_id in sample_ids]
+
+def denovo_fastq_func(wildcards):
+    res = []
+    for focal_sample_id, joint_id in IDs.sample_id_to_joint_id.items():
+        if joint_id == wildcards.joint_id:
+            res.append(
+                Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
+                        / f"{focal_sample_id}" / f"{focal_sample_id}.ccs.filtered.fastq.gz"
+            )
+    return res
+
+rule hifiasm_assembly:
+    input:
+        fastq_gz = denovo_fastq_func,
+    output:
+        fasta1 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/") \
+            / "{joint_id}" / "{joint_id}.asm.bp.hap1.p_ctg.gfa",
+        fasta2 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/") \
+            / "{joint_id}" / "{joint_id}.asm.bp.hap2.p_ctg.gfa",
+    threads: 32,
+    resources: 
+        mem_mb = 320000,
+    run:
+        prefix = output.fasta1.replace(".bp.hap1.p_ctg.gfa", "")
+        shell(
+            f"{hifiasm_path} -o {prefix} -t {threads} {input.fastq_gz}"
+        )
+
+rule hifiasm_assembly_final:    
+    input:
+        [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/") \
+                / f"{joint_id}" / f"{joint_id}.asm.bp.hap1.p_ctg.gfa") \
+                for joint_id in [IDs.sample_id_to_joint_id[k] for k in sample_ids]]
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Mapping to haplotypes
@@ -104,6 +137,8 @@ rule gfa_to_fasta:
         gfa = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/{something}/{prefix}.gfa",
     output:
         fasta = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/{something}/{prefix}.fasta",
+    resources:
+        mem_mb=2048,
     run:
         shell(
             "awk '/^S/{{print \">\"$2;print $3}}' {input.gfa} > {output.fasta}"
@@ -150,27 +185,6 @@ rule scaffold_haplotypes_final:
             for focal_sample_id in ["PD50489e"] \
             for haplotype in [1,2]]            
 
-# rule merge_and_index_fastq:
-#     input:
-#         gz_dir = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
-#             / "{focal_sample_id}",
-#     output:
-#         fastq_gz = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
-#             / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz",
-#         fastq_gz_fxi = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
-#             / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz.fxi",
-#     resources:
-#         mem_mb=16000,
-#     run:
-#         shell("cat {input.gz_dir}/m*.ccs.filtered.fastq.gz > {output.fastq_gz}")
-#         shell("rm -f {output.fastq_gz_fxi}")
-#         shell("pyfastx index {output.fastq_gz}")
-
-# rule merge_and_index_fastq_final:
-#     input:
-#         [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
-#             / f"{focal_sample_id}" / f"{focal_sample_id}.ccs.filtered.fastq.gz") \ 
-#             for focal_sample_id in sample_ids]
 
 
 rule minimap2_to_haplotype:
@@ -195,7 +209,7 @@ rule minimap2_to_haplotype:
             "-ax map-hifi --cs=short --eqx --MD "
             "{input.denovo_reference} "
             "{input.fastq_gz} "
-            "| {samtools_path} sort -o {output.bam}"
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
         )
 
         shell(
@@ -255,7 +269,7 @@ rule minimap2_to_T2T:
             "-ax map-hifi --cs=short --eqx --MD "
             "{input.reference} "
             "{input.fastq_gz} "
-            "| {samtools_path} sort -o {output.bam}"
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
         )
 
         shell(
@@ -311,7 +325,7 @@ rule minimap2_to_grch37:
             "-ax map-hifi --cs=short --eqx --MD "
             "{input.reference} "
             "{input.fastq_gz} "
-            "| {samtools_path} sort -o {output.bam}"
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
         )
 
         shell(
@@ -367,7 +381,7 @@ rule minimap2_to_grch38:
             "-ax map-hifi --cs=short --eqx --MD "
             "{input.reference} "
             "{input.fastq_gz} "
-            "| {samtools_path} sort -o {output.bam}"
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
         )
 
         shell(

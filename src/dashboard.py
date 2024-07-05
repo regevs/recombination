@@ -115,7 +115,7 @@ def start_igv(
             "reference": {
                 "id": str(x),
                 "name": str(x),
-                "fastaURL": str(reference_fasta_filename),
+                "fastaPath": str(reference_fasta_filename),
                 "indexPath": str(reference_fasta_filename) + ".fai",
             },
             "locus": locus,
@@ -123,8 +123,8 @@ def start_igv(
             "tracks": [
                 {
                     "name": "Local BAM",
-                    "url": bam_filename,
-                    "indexURL": bam_filename + ".bai",
+                    "path": bam_filename,
+                    "indexPath": bam_filename + ".bai",
                     "format": "bam",
                     "type": "alignment",
                     "colorBy": "tag",

@@ -8,6 +8,8 @@ import numpy as np
 import scipy.stats
 from pathlib import Path
 
+import pyBigWig
+
 from . import inference
 
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
@@ -63,7 +65,7 @@ def crossover_prob_detection_full_read(
     
     prob = 0.0
     for idx_trans in range(1, len(snp_positions)-2):
-        prob += inference.likelihood_of_read(
+        prob += inference.old_likelihood_of_read(
             read_length = read_length,
             snp_positions_on_read = snp_positions,
             idx_transitions = [idx_trans],
@@ -90,7 +92,7 @@ def crossover_prob_detection_in_crossover_active_interval(
     
     prob = 0.0
     for idx_trans in range(len(snp_positions)-1):
-        this_prob = inference.likelihood_of_read(
+        this_prob = inference.old_likelihood_of_read(
             read_length = read_length,
             snp_positions_on_read = snp_positions,
             idx_transitions = [idx_trans],
@@ -114,7 +116,7 @@ def noncrossover_prob_detection_full_read(
     
     prob = 0.0
     for idx_trans in range(0, len(snp_positions)-2):
-        prob += inference.likelihood_of_read(
+        prob += inference.old_likelihood_of_read(
             read_length = read_length,
             snp_positions_on_read = snp_positions,
             idx_transitions = [idx_trans, idx_trans+1],
@@ -141,7 +143,7 @@ def noncrossover_prob_detection_in_noncrossover_active_interval(
     
     prob = 0.0
     for idx_trans in range(0, len(snp_positions)-2):
-        prob += inference.likelihood_of_read(
+        prob += inference.old_likelihood_of_read(
             read_length = read_length,
             snp_positions_on_read = snp_positions,
             idx_transitions = [idx_trans, idx_trans+1],
@@ -168,7 +170,7 @@ def noncrossover_prob_detection_in_crossover_active_interval(
     
     prob = 0.0
     for idx_trans in range(0, len(snp_positions)-2):
-        prob += inference.likelihood_of_read(
+        prob += inference.old_likelihood_of_read(
             read_length = read_length,
             snp_positions_on_read = snp_positions,
             idx_transitions = [idx_trans, idx_trans+1],
@@ -194,10 +196,14 @@ def annotate_read_structure(
     cov_hap2_parquet_filename,
     AA_hotspots_filename,
     CL4_hotspots_filename,
+    H3K4me3_filename,
+    CTCF_filename,
+    classified_reads_filename,
     GC_tract_mean = 30,
     min_mapq = 60,
     max_total_mismatches = 100,
     max_total_clipping = 10,
+    read_margin_in_bp = 5000,
 ):
     # Read SNPs
     snps_df = pl.read_parquet(snps_filename)
@@ -420,6 +426,100 @@ def annotate_read_structure(
         .fill_nan(None)
     )
 
+    ### Add cM between each pair of SNPs
+    # For mid quality SNPs
+    exploded_df = (reads_df
+        .select(
+            "read_name",
+            "mid_quality_snp_positions",
+            "grch37_reference_start",
+        )
+        .explode("mid_quality_snp_positions")
+    )
+
+    reads_df = (reads_df
+        .join(
+            (exploded_df
+                .with_columns(
+                    at_mid_quality_snp_cM = rate_map.get_cumulative_mass(exploded_df["grch37_reference_start"] + exploded_df["mid_quality_snp_positions"]) * 1e2,
+                )
+                .drop_nulls()
+                .group_by("read_name", maintain_order=True)
+                .agg("at_mid_quality_snp_cM")
+            ),
+            on="read_name",
+            how="left",
+        )
+    )
+
+    reads_df = (reads_df
+        .with_columns(
+            between_mid_quality_snps_cM = pl.lit([]).list.concat(
+                [
+                    "grch37_reference_start_cM",
+                    "at_mid_quality_snp_cM",
+                    "grch37_reference_end_cM",
+                ]
+            ).list.diff(null_behavior="drop")
+        )
+    )
+
+    # For high quality SNPs
+    exploded_df = (reads_df
+        .select(
+            "read_name",
+            "high_quality_snp_positions",
+            "grch37_reference_start",
+        )
+        .explode("high_quality_snp_positions")
+    )
+
+    reads_df = (reads_df
+        .join(
+            (exploded_df
+                .with_columns(
+                    at_high_quality_snp_cM = rate_map.get_cumulative_mass(exploded_df["grch37_reference_start"] + exploded_df["high_quality_snp_positions"]) * 1e2,
+                )
+                .drop_nulls()
+                .group_by("read_name", maintain_order=True)
+                .agg("at_high_quality_snp_cM")
+            ),
+            on="read_name",
+            how="left",
+        )
+    )
+
+    reads_df = (reads_df
+        .with_columns(
+            between_high_quality_snps_cM = pl.lit([]).list.concat(
+                [
+                    "grch37_reference_start_cM",
+                    "at_high_quality_snp_cM",
+                    "grch37_reference_end_cM",
+                ]
+            ).list.diff(null_behavior="drop")
+        )
+    )
+
+    ### Add cM before and after read
+    cols_df = (reads_df.select(
+            pl.max_horizontal(
+                pl.lit(0), 
+                pl.col("grch37_reference_start") - read_margin_in_bp,
+            ).alias("before_read_bp"),
+            pl.min_horizontal(
+                pl.col("grch37_chromosome_size_in_bp"), 
+                pl.col("grch37_reference_end") + read_margin_in_bp,
+            ).alias("after_read_bp"),
+        )
+    )
+    reads_df = (reads_df
+        .with_columns(
+            before_read_cM = reads_df["grch37_reference_start_cM"] - rate_map.get_cumulative_mass(cols_df["before_read_bp"]) * 1e2,
+            after_read_cM = rate_map.get_cumulative_mass(cols_df["after_read_bp"]) * 1e2 - reads_df["grch37_reference_end_cM"],
+        )        
+    )
+
     ### Add detection probabilities
     CO_prob_detection_full_read_df = (reads_df
         .select("read_name", "read_length", "high_quality_snp_positions")
@@ -543,7 +643,63 @@ def annotate_read_structure(
         )
     )
 
-    ### Add read quality
+    # Add H3K4me3 signal
+    with pyBigWig.open(H3K4me3_filename) as BW:
+        rows = []
+        for row in reads_df.iter_rows(named=True):
+            if row["grch38_reference_start"] and row["CO_active_interval_start"]:
+                ss = BW.stats(
+                    row["chrom"], 
+                    row["grch38_reference_start"] + row["CO_active_interval_start"],
+                    row["grch38_reference_start"] + row["CO_active_interval_end"],
+                    "sum"
+                )[0]
+                sm = BW.stats(
+                    row["chrom"], 
+                    row["grch38_reference_start"] + row["CO_active_interval_start"],
+                    row["grch38_reference_start"] + row["CO_active_interval_end"],
+                    "mean"
+                )[0]
+                rows.append([row["read_name"], ss, sm])
+            
+    H3K4me3_df = pl.DataFrame(rows, schema=["read_name", "H3K4me3_signal_sum", "H3K4me3_signal_mean"])
+    reads_df = (reads_df
+        .join(
+            H3K4me3_df, 
+            on="read_name",
+            how="left",
+        )
+    )
+
+    # Add CTCF signal
+    with pyBigWig.open(CTCF_filename) as BW:
+        rows = []
+        for row in reads_df.iter_rows(named=True):
+            if row["grch38_reference_start"] and row["CO_active_interval_start"]:
+                ss = BW.stats(
+                    row["chrom"], 
+                    row["grch38_reference_start"] + row["CO_active_interval_start"],
+                    row["grch38_reference_start"] + row["CO_active_interval_end"],
+                    "sum"
+                )[0]
+                sm = BW.stats(
+                    row["chrom"], 
+                    row["grch38_reference_start"] + row["CO_active_interval_start"],
+                    row["grch38_reference_start"] + row["CO_active_interval_end"],
+                    "mean"
+                )[0]
+                rows.append([row["read_name"], ss, sm])
+            
+    CTCF_df = pl.DataFrame(rows, schema=["read_name", "CTCF_signal_sum", "CTCF_signal_mean"])
+    reads_df = (reads_df
+        .join(
+            CTCF_df, 
+            on="read_name",
+            how="left",
+        )
+    )
+
+    # Add read quality
     reads_df = (reads_df
         .with_columns(
             is_high_quality_read = (
@@ -555,5 +711,64 @@ def annotate_read_structure(
             )
         )
     )
+
+    # Join with candidate classes
+    cls_df = pl.read_parquet(classified_reads_filename)
+    
+    reads_df = (reads_df
+        .join(
+            cls_df.select("read_name", "class", "snp_positions_on_read", "idx_transitions", "high_quality_classification"),
+            on="read_name",
+            how="left",
+        )
+        .with_columns(
+            high_quality_classification_class = pl.when("high_quality_classification").then("class")
+        )                
+    )
+
+    # Re-call the class only on high quality SNPs, only in the active region, 
+    # but use the filtering of reads to avoid problems like fake COs from low coverage etc.
+    reads_df = (reads_df    
+        .join(
+            (reads_df
+                .with_columns(
+                    high_quality_snps_diff = pl.col("high_quality_snp_positions_alleles").list.diff(null_behavior="drop"),
+                    mid_quality_snps_diff = pl.col("mid_quality_snp_positions_alleles").list.diff(null_behavior="drop"),
+                )
+                .with_columns(
+                    high_quality_snps_transitions = pl.col("high_quality_snps_diff").list.eval(pl.element() != 0).cast(pl.List(int)),        
+                    mid_quality_snps_transitions = pl.col("mid_quality_snps_diff").list.eval(pl.element() != 0).cast(pl.List(int)),        
+                )
+                .with_columns(
+                    high_quality_snps_idx_transitions = pl.col("high_quality_snps_transitions").list.eval(pl.arg_where(pl.element() != 0)),
+                    mid_quality_snps_idx_transitions = pl.col("mid_quality_snps_transitions").list.eval(pl.arg_where(pl.element() != 0)),
+                )
+                .with_columns(
+                    high_quality_classification_in_detectable_class = pl.when( 
+                        (pl.col("high_quality_classification_class").is_not_null()) &
+                        (pl.col("high_quality_snp_positions_alleles").list.get(0) == pl.col("high_quality_snp_positions_alleles").list.get(1)) &
+                        (pl.col("high_quality_snp_positions_alleles").list.get(-1) == pl.col("high_quality_snp_positions_alleles").list.get(-2))
+                    ).then(
+                        pl.when(
+                            pl.col("high_quality_snps_transitions").list.sum() == 1
+                        ).then(
+                            pl.lit("CO")
+                        ).when(
+                            pl.col("high_quality_snps_transitions").list.sum() == 2
+                        ).then(
+                            pl.lit("NCO")
+                        )
+                    )
+                )
+                .select(
+                    "read_name",
+                    "high_quality_snps_idx_transitions", 
+                    "mid_quality_snps_idx_transitions",
+                    "high_quality_classification_in_detectable_class",
+                )
+            ),
+            on="read_name",
+        )        
+    )       
 
     return reads_df
