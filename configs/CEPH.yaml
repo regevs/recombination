@@ -1,0 +1,52 @@
+# This point to the table described above
+data_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/CEPH.tsv
+
+# Optional sublist
+sample_sets: 200080,200082
+
+# Path to assembly paths
+assembly_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/CEPH_assemblies.tsv
+
+# Where the output of this run will be
+output_dir_path: /lustre/scratch122/tol/projects/sperm/results/CEPH_20241119/
+
+# QC parameters that are common to all flow cell types
+qc_parameters:    
+  high_confidence_slack: 10
+  certainty_threshold: 0.95
+  map_qual_min: 60
+  total_mismatches_max: 100
+  total_clipping_max: 10
+  phased_coverage_min: 3
+  allele_coverage_min: 3
+  GC_tract_mean: 30
+  read_margin_in_bp: 5000
+
+# QC parameters per flow cell type
+flow_cell_types:
+  sequel_ii: 
+    base_qual_min_detection: 60
+    base_qual_min_classification: 30
+    read_trimming_detection: 1500
+    read_trimming_classification: 500
+  revio: 
+    base_qual_min_detection: 40
+    base_qual_min_classification: 30
+    read_trimming_detection: 400
+    read_trimming_classification: 200
+    
+# Paths to various programs needed
+tools:
+  hifiasm_path: /nfs/users/nfs_r/rs42/rs42/software/hifiasm/hifiasm
+  bedtools_path: /nfs/users/nfs_r/rs42/rs42/software/bedtools
+  minimap2_path: /nfs/users/nfs_r/rs42/rs42/software/minimap2-2.26_x64-linux/minimap2
+  samtools_path: /nfs/users/nfs_r/rs42/rs42/software/samtools-1.18/samtools
+  bcftools_path: /nfs/users/nfs_r/rs42/rs42/software/bcftools-1.18/bcftools
+  trf_path: /nfs/users/nfs_r/rs42/rs42/software/trf409.linux64
+  ragtag_path: ragtag.py
+  sdust_path: /nfs/users/nfs_r/rs42/rs42/git/sdust/sdust
+
+files:
+  t2t_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta
+  grch37_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/01.grch37/human_g1k_v37_decoy.fasta
+  grch38_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/02.grch38/Homo_sapiens_assembly38.fasta

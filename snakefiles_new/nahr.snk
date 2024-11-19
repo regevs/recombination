@@ -1,0 +1,105 @@
+# ------------------------------------------------------------------------------------------------------------------------
+# Filter the bam ato have only reads with multiple alignments
+#
+rule filter_multiple_alignments:
+    input:
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam",
+        bai = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam.bai",
+    output:
+        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.read_names.txt",
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.bam",
+    threads: 8
+    run:
+        # Get interesting reads
+        shell(
+            "{samtools_path} view -@ {threads} -q 20 --rf 0x900 {input.bam} | "
+            "cut -f1 | sort -u > {output.read_names}"
+        )
+
+        # Get just those reads
+        shell(
+            "{samtools_path} view -q 20 -@ {threads} -N {output.read_names} -h -b {input.bam} | "
+            "{samtools_path} sort -n > {output.bam}"
+        )
+
+rule filter_multiple_alignments_all:
+    input:
+        bam = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+                / f"{focal_sample_id}" / f"{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.bam") \
+                for focal_sample_id in ["PD50489e"] \
+                for haplotype in [1]]
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Map putative reads back to T2T reference
+#
+rule reads_to_t2t:
+    input:
+        read_names = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.read_names.txt",
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/03.T2T-CHM13/") \
+            / "{focal_sample_id}" / "chm13.{focal_sample_id}.minimap2.primary_alignments.sorted.bam",
+        bed = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0_SD.bed",
+    output:
+        bam = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.read_names.T2T_mapped.bam",
+        bed = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.read_names.T2T_mapped.bed",
+    threads: 16,
+    run:
+        shell(
+            "{samtools_path} view -q 20 -@ {threads} -N {input.read_names} -h -b {input.bam} | "
+            "{samtools_path} sort > {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index {output.bam}"
+        )
+
+        shell(
+            "{bedtools_path} intersect "
+            "-abam {output.bam} "
+            "-b {input.bed} "
+            "-wao "
+            "-bed "
+            " > {output.bed}"            
+        )
+
+rule reads_to_t2t_all:
+    input:
+        biser = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+            / f"{focal_sample_id}" / f"{focal_sample_id}.hap{haplotype}.minimap2.sorted.multiple_alignments.read_names.T2T_mapped.bed") \
+            for focal_sample_id in ["PD50489e"] \
+                for haplotype in [1]]
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Find segmental duplications
+#
+biser_path = "/nfs/treeoflife-01/teams/tola/users/rs42/miniconda3/envs/sperm/bin/biser"
+
+rule run_biser:
+    input:
+        fasta = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+    output:
+        biser = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta.biser",
+    threads: 1
+    resources:
+        mem_mb=64000
+    run:
+        shell(
+            "/usr/bin/time -v {biser_path} --threads {threads} -o {output.biser} --keep-contigs --no-decomposition --gc-heap 60G {input.fasta}" 
+        )
+
+rule run_biser_all:
+    input:
+        biser = [str(hap_scaffolds_path \
+            / f"{focal_sample_id}" / f"haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta.biser") \
+            for focal_sample_id in ["PD50489e"] \
+                for haplotype in [1]]

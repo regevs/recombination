@@ -1,0 +1,61 @@
+import pickle
+
+rule infer_tract_length:
+    input:
+        reads = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+            / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.certainty_0.95.all_reads_structure_annotated.parquet") \
+                for focal_sample_id in IDs.rahbari_sample_ids \
+                for chrom in aut_chrom_names],
+    output:
+        pcl = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/08.tract_length/inference.sample_every={sample_every}.bootstrap={bootstrap}.rep={rep}.pcl",
+    resources:
+        mem_mb = 128*1000,
+        time_min = 120,
+    threads: 32,
+    run:
+        if wildcards.bootstrap == "1":
+            bootstrap = True
+        else:
+            bootstrap = False
+
+        rep = int(wildcards.rep)
+        sample_every = int(wildcards.sample_every)
+
+        reads_df = pl.concat([
+            pl.scan_parquet(filename) for filename in input.reads
+        ])
+
+        idf = inference.generate_call_set(
+            reads_df,
+            IDs.rahbari_sample_ids, 
+            take_every=1, 
+            bootstrap=bootstrap, 
+            min_snps=3, 
+            sample_every=sample_every,
+        )
+
+
+        res = inference.maximum_likelihood_all_reads(
+            idf["read_length"].to_numpy(),
+            idf["high_quality_snp_positions"].to_numpy(),
+            idf["high_quality_snps_idx_transitions"].to_numpy(),
+            idf["between_high_quality_snps_cM"].to_numpy() * 1e-2,
+            idf["before_read_cM"].to_numpy() * 1e-2,
+            idf["after_read_cM"].to_numpy() * 1e-2,
+            idf["weight"].to_numpy(),
+            q_range = (0.05, 0.5),   
+            m_range = (0.8, 1),
+            GC_tract_mean_range = (5, 1000),
+            GC_tract_mean2_range = (100, 100000),
+            read_margin_in_bp = 5000,
+            x0 = [0.1, 0.98, 30, 1000],
+        )
+
+        pickle.dump(res, open(output.pcl, "wb"))
+
+rule infer_tract_length_final:
+    input:
+        pcl = [f"/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/08.tract_length/inference.sample_every={sample_every}.bootstrap={bootstrap}.rep={rep}.pcl"
+            for sample_every, bootstrap, rep in \
+                [[1, 0, 0]] + [[1, 1, i] for i in range(100)]
+        ]

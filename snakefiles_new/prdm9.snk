@@ -1,0 +1,74 @@
+rule find_prdm9_alleles:
+    input:
+        # Generated in notebooks/20240424_PRDM9_analysis.ipynb
+        fasta = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/07.PRDM9/GSE166483_PRDM9_genotypes.fasta",
+
+        # Haplotypes
+        denovo_reference = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+
+    output:
+        bam = root_path / "02.results/07.prdm9" / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam",
+        bai = root_path / "02.results/07.prdm9" / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam.bai",
+    
+    threads: 32,
+    resources:
+        mem_mb=50000,
+    run:
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.focal_sample_id}\\tPL:PACBIO\\tSM:{wildcards.focal_sample_id}\\tPU:{wildcards.focal_sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax map-hifi --cs=short --eqx --MD "
+            "{input.denovo_reference} "
+            "{input.fasta} "
+            "| {samtools_path} sort -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index {output.bam}"
+        )
+
+rule find_prdm9_whole_sequence:
+    input:
+        fasta = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/07.PRDM9/prdm9.fasta",
+
+        # Haplotypes
+        denovo_reference = hap_scaffolds_path \
+            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+
+    output:
+        bam = root_path / "02.results/07.prdm9" / "whole_gene/PRDM9" / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam",
+        bai = root_path / "02.results/07.prdm9" / "whole_gene/PRDM9" / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam.bai",
+    
+    threads: 32,
+    resources:
+        mem_mb=50000,
+    run:
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.focal_sample_id}\\tPL:PACBIO\\tSM:{wildcards.focal_sample_id}\\tPU:{wildcards.focal_sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax map-hifi --cs=short --eqx --MD "
+            "{input.denovo_reference} "
+            "{input.fasta} "
+            "| {samtools_path} sort -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index {output.bam}"
+        )        
+
+rule find_prdm9_alleles_final:
+    input:
+        bam = [str(root_path / "02.results/07.prdm9" / f"{focal_sample_id}" / f"{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam") \
+            for focal_sample_id in sample_ids
+            for haplotype in [1,2]
+        ]
+
+rule find_prdm9_whole_final:
+    input:
+        bam = [str(root_path / "02.results/07.prdm9" / "whole_gene/PRDM9" / f"{focal_sample_id}" / f"{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam") \
+            for focal_sample_id in sample_ids
+            for haplotype in [1,2]
+        ]        
