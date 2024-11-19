@@ -76,7 +76,8 @@ rule merge_and_index_fastq:
         fastq_gz_fxi = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/02.ccs/") \
             / "{focal_sample_id}" / "{focal_sample_id}.ccs.filtered.fastq.gz.fxi",
     resources:
-        mem_mb=16000,
+        mem_mb = lambda wildcards, attempt: attempt * 32000,
+        runtime = 8 * 60,
     run:
         shell("cat {input.gz_dir}/m*filtered*.fastq.gz > {output.fastq_gz}")
         shell("rm -f {output.fastq_gz_fxi}")
@@ -118,8 +119,8 @@ rule hifiasm_assembly:
 rule hifiasm_assembly_final:    
     input:
         [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/04.hifiasm/02.hifiasm_0.19.5-r592/") \
-                / f"{joint_id}" / f"{joint_id}.asm.bp.hap1.p_ctg.gfa") \
-                for joint_id in [IDs.sample_id_to_joint_id[k] for k in sample_ids]]
+                / f"{joint_id}" / f"{joint_id}.asm.bp.hap{hap}.p_ctg.gfa") \
+                for joint_id in [IDs.sample_id_to_joint_id[k] for k in sample_ids] for hap in [1,2]]
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Mapping to haplotypes
@@ -172,7 +173,9 @@ rule scaffold_haplotypes:
         )
         with open(output.fasta, 'r') as infile:
             with open(output.expanded_fasta, 'w') as outfile:
-                outfile.write(re.sub(r'N{100}', 'N'*30000, infile.read()))
+                # Replace every occurrence of 100-30000 Ns (gap inserted by RagTag) or more by 30,000 exactly.
+                # This avoid read spanning consecutive contigs, but does not explode the expanded sequence.
+                outfile.write(re.sub(r'N{100,30000}', 'N'*30000, infile.read()))
 
         shell(
             "{samtools_path} faidx {output.expanded_fasta}"
@@ -182,7 +185,7 @@ rule scaffold_haplotypes_final:
     input:
         fasta = [str(hap_scaffolds_path \
             / f"{focal_sample_id}" / f"haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta") \
-            for focal_sample_id in ["PD50489e"] \
+            for focal_sample_id in sample_ids \
             for haplotype in [1,2]]            
 
 
@@ -200,7 +203,7 @@ rule minimap2_to_haplotype:
             / "{focal_sample_id}" / "{focal_sample_id}.hap{haplotype}.minimap2.sorted.bam.bai",
     threads: 32,
     resources:
-        mem_mb=50000,
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
         shell(
             "{minimap2_path} "
@@ -260,7 +263,7 @@ rule minimap2_to_T2T:
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.bam.bai",
     threads: 32,
     resources:
-        mem_mb=50000,
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
         shell(
             "{minimap2_path} "
@@ -316,7 +319,7 @@ rule minimap2_to_grch37:
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.bam.bai",
     threads: 32,
     resources:
-        mem_mb=50000,
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
         shell(
             "{minimap2_path} "
@@ -372,7 +375,7 @@ rule minimap2_to_grch38:
             / "{focal_sample_id}" / "{focal_sample_id}.minimap2.sorted.bam.bai",
     threads: 32,
     resources:
-        mem_mb=50000,
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
         shell(
             "{minimap2_path} "
