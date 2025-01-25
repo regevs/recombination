@@ -1,0 +1,13 @@
+sample_set	sample_id	flow_cell	flow_cell_type	path
+95619	95619	m84053_230911_213500_s2	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/95619/m84053_230911_213500_s2.bc2021.ccs.filtered.fastq.gz
+95619	95619	m84053_230908_195942_s2	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/95619/m84053_230908_195942_s2.bc2021.ccs.filtered.fastq.gz
+1894	1894	m84053_230601_202536_s4	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/1894/m84053_230601_202536_s4.bc2050.ccs.filtered.fastq.gz
+1894	1894	m84053_230629_234400_s4	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/1894/m84053_230629_234400_s4.bc2068.ccs.filtered.fastq.gz
+3898	3898	m84053_230801_204324_s3	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/3898/m84053_230801_204324_s3.bc2089.ccs.filtered.fastq.gz
+3898	3898	m84053_230630_233200_s3	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/3898/m84053_230630_233200_s3.bc2070.ccs.filtered.fastq.gz
+115980	115980	m84139_230913_161502_s4	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/115980/m84139_230913_161502_s4.bc2023.ccs.filtered.fastq.gz
+115980	115980	m84053_230919_202201_s2	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/115980/m84053_230919_202201_s2.bc2023.ccs.filtered.fastq.gz
+7899	7899	m84053_230911_203330_s4	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/7899/m84053_230911_203330_s4.bc2019.ccs.filtered.fastq.gz
+7899	7899	m84053_230908_185731_s4	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/7899/m84053_230908_185731_s4.bc2019.ccs.filtered.fastq.gz
+2895	2895	m84053_230630_230054_s2	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/2895/m84053_230630_230054_s2.bc2069.ccs.filtered.fastq.gz
+2895	2895	m84053_230630_222948_s1	revio_40	/lustre/scratch122/tol/projects/sperm/data/PeterSudmant/2895/m84053_230630_222948_s1.bc2069.ccs.filtered.fastq.gz

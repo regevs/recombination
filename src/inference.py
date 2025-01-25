@@ -1016,6 +1016,7 @@ def log_likelihood_of_many_reads(
     m,
     GC_tract_mean,
     GC_tract_mean2,
+    prob_factor,
     read_margin_in_bp,
 ):
     S = 0.0
@@ -1026,9 +1027,9 @@ def log_likelihood_of_many_reads(
                     read_length_list[i],
                     snp_positions_on_read_list[i],
                     idx_transitions_list[i],
-                    prob_CO_between_snps_list[i],
-                    prob_CO_before_read_list[i],
-                    prob_CO_after_read_list[i],
+                    prob_CO_between_snps_list[i] * prob_factor,
+                    prob_CO_before_read_list[i] * prob_factor,
+                    prob_CO_after_read_list[i] * prob_factor,
                     q,
                     m,
                     GC_tract_mean,
@@ -1112,11 +1113,13 @@ def maximum_likelihood_all_reads(
     m_range,
     GC_tract_mean_range,
     GC_tract_mean2_range,
+    prob_factor_range,
     read_margin_in_bp = 5000,
     x0 = None,
 ):
     assert q_range[0] > 0 and q_range[1] < 1 and q_range[0] <= q_range[1]
     assert m_range[0] >= 0 and m_range[1] <= 1 and m_range[0] <= m_range[1]
+    assert prob_factor_range[0] > 0 and prob_factor_range[1] <= 1 and prob_factor_range[0] <= prob_factor_range[1]
     assert GC_tract_mean_range[0] >= 1
     assert GC_tract_mean2_range[0] >= 1
 
@@ -1134,6 +1137,7 @@ def maximum_likelihood_all_reads(
             np.mean(m_range),
             np.mean(GC_tract_mean_range), 
             np.mean(GC_tract_mean2_range), 
+            np.mean(prob_factor_range),
         ]
 
     def minimizeme(x):        
@@ -1151,6 +1155,7 @@ def maximum_likelihood_all_reads(
                 m = x[1],
                 GC_tract_mean = x[2],
                 GC_tract_mean2 = x[3],
+                prob_factor = x[4],
                 read_margin_in_bp = read_margin_in_bp,
             )
             
@@ -1162,11 +1167,133 @@ def maximum_likelihood_all_reads(
         fun = minimizeme,
         x0 = x0,
         method = "Nelder-Mead",
-        bounds = [q_range, m_range, GC_tract_mean_range, GC_tract_mean2_range],
+        bounds = [q_range, m_range, GC_tract_mean_range, GC_tract_mean2_range, prob_factor_range],
         options={'xatol': 1e-2},
     )
 
     return res
+
+
+
+# ------------------------------------------------------------------------------------------------
+#
+# Optimize joint model for blood and sperm
+#
+def maximum_likelihood_all_reads_joint(
+    read_length_list_sperm,
+    snp_positions_on_read_list_sperm,
+    idx_transitions_list_sperm,
+    prob_CO_between_snps_list_sperm,
+    prob_CO_before_read_list_sperm,
+    prob_CO_after_read_list_sperm,
+    weights_list_sperm,
+    read_length_list_blood,
+    snp_positions_on_read_list_blood,
+    idx_transitions_list_blood,
+    prob_CO_between_snps_list_blood,
+    prob_CO_before_read_list_blood,
+    prob_CO_after_read_list_blood,
+    weights_list_blood,
+    q_range_sperm,
+    q_range_blood,
+    m_range_sperm,
+    m_range_blood,
+    GC_tract_mean_range,
+    GC_tract_mean2_range,
+    prob_factor_range_sperm,
+    prob_factor_range_blood,
+    read_margin_in_bp = 5000,
+    x0 = None,
+):
+    assert q_range_sperm[0] > 0 and q_range_sperm[1] < 1 and q_range_sperm[0] <= q_range_sperm[1]
+    assert q_range_blood[0] > 0 and q_range_blood[1] < 1 and q_range_blood[0] <= q_range_blood[1]
+    assert m_range_sperm[0] >= 0 and m_range_sperm[1] <= 1 and m_range_sperm[0] <= m_range_sperm[1]
+    assert m_range_blood[0] >= 0 and m_range_blood[1] <= 1 and m_range_blood[0] <= m_range_blood[1]
+    assert prob_factor_range_sperm[0] > 0 and prob_factor_range_sperm[1] <= 1 and prob_factor_range_sperm[0] <= prob_factor_range_sperm[1]
+    assert prob_factor_range_blood[0] > 0 and prob_factor_range_blood[1] <= 1 and prob_factor_range_blood[0] <= prob_factor_range_blood[1]
+    assert GC_tract_mean_range[0] >= 1
+    assert GC_tract_mean2_range[0] >= 1
+
+    read_length_list_sperm = numba.typed.List(read_length_list_sperm)
+    snp_positions_on_read_list_sperm = numba.typed.List(snp_positions_on_read_list_sperm)
+    idx_transitions_list_sperm = numba.typed.List([np.array(x).astype(np.int32) for x in idx_transitions_list_sperm]) 
+    prob_CO_between_snps_list_sperm = numba.typed.List(prob_CO_between_snps_list_sperm)
+    prob_CO_before_read_list_sperm = numba.typed.List(prob_CO_before_read_list_sperm)
+    prob_CO_after_read_list_sperm = numba.typed.List(prob_CO_after_read_list_sperm)
+    weights_list_sperm = numba.typed.List(weights_list_sperm)
+
+    read_length_list_blood = numba.typed.List(read_length_list_blood)
+    snp_positions_on_read_list_blood = numba.typed.List(snp_positions_on_read_list_blood)
+    idx_transitions_list_blood = numba.typed.List([np.array(x).astype(np.int32) for x in idx_transitions_list_blood])    
+    prob_CO_between_snps_list_blood = numba.typed.List(prob_CO_between_snps_list_blood)
+    prob_CO_before_read_list_blood = numba.typed.List(prob_CO_before_read_list_blood)
+    prob_CO_after_read_list_blood = numba.typed.List(prob_CO_after_read_list_blood)
+    weights_list_blood = numba.typed.List(weights_list_blood)
+
+    if x0 is None:
+        x0 = [
+            np.mean(q_range_sperm), 
+            np.mean(q_range_blood), 
+            np.mean(m_range_sperm),
+            np.mean(m_range_blood),
+            np.mean(GC_tract_mean_range), 
+            np.mean(GC_tract_mean2_range), 
+            np.mean(prob_factor_range_sperm),
+            np.mean(prob_factor_range_blood),
+        ]
+
+    def minimizeme(x):        
+        with np.printoptions(precision=3, suppress=True):
+            print(f"Current:\t{x}\t", end="")   
+            res_sperm = -log_likelihood_of_many_reads(
+                read_length_list_sperm,
+                snp_positions_on_read_list_sperm,
+                idx_transitions_list_sperm,
+                prob_CO_between_snps_list_sperm,
+                prob_CO_before_read_list_sperm,
+                prob_CO_after_read_list_sperm,
+                weights_list_sperm,
+                q = x[0],
+                m = x[2],
+                GC_tract_mean = x[4],
+                GC_tract_mean2 = x[5],
+                prob_factor = x[6],
+                read_margin_in_bp = read_margin_in_bp,
+            )
+
+            res_blood = -log_likelihood_of_many_reads(
+                read_length_list_blood,
+                snp_positions_on_read_list_blood,
+                idx_transitions_list_blood,
+                prob_CO_between_snps_list_blood,
+                prob_CO_before_read_list_blood,
+                prob_CO_after_read_list_blood,
+                weights_list_blood,
+                q = x[1],
+                m = x[3],
+                GC_tract_mean = x[4],
+                GC_tract_mean2 = x[5],
+                prob_factor = x[7],
+                read_margin_in_bp = read_margin_in_bp,
+            )
+
+            res = res_sperm + res_blood
+            
+            print(f"{res}")   
+            return res     
+    
+    
+    res = scipy.optimize.minimize(
+        fun = minimizeme,
+        x0 = x0,
+        method = "Nelder-Mead",
+        bounds = [q_range_sperm, q_range_blood, m_range_sperm, m_range_blood, 
+                  GC_tract_mean_range, GC_tract_mean2_range, prob_factor_range_sperm, prob_factor_range_blood],
+        options={'xatol': 1e-2, "maxiter": 1000000, "maxfev": 1000000},
+    )
+
+    return res
+
 
 # ------------------------------------------------------------------------------------------------
 #
@@ -1910,7 +2037,7 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
     #
     # 1. Take all reads with any switches
     #
-    # - High quality read (same strand, MAPQ, mismatches and clipping
+    # - High quality read (same strand, MAPQ, mismatches and clipping)
     # - Has enough coverage on both haplotypes
     # - Mapped to nonzero cM
     # - Has more than min SNPs
@@ -1926,6 +2053,7 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
         .filter(pl.col("high_quality_snp_positions").list.len() >= min_snps)
         .filter(pl.col("high_quality_classification"))
         .filter(pl.col("high_quality_classification_class") != "CNCO")
+        .collect(streaming=True)
         .select(
             "read_name",
             "read_length",
@@ -1947,7 +2075,7 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
             weight = pl.lit(1),
         )
     )
-    
+
     #
     # 2. Take a subset of reads without swithces
     #
@@ -1966,6 +2094,7 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
         .filter(pl.col("high_quality_snp_positions").list.len() >= min_snps)
         .filter(pl.col("idx_transitions").is_null())
         .gather_every(take_every)
+        .collect(streaming=True)
         .select(
             "read_name",
             "read_length",
@@ -1983,14 +2112,16 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
             "high_quality_snp_positions_alleles",
             "mid_quality_snp_positions_alleles",
             "high_quality_snps_idx_transitions",
-            idx_transitions = pl.col("idx_transitions").fill_null([]),
+            idx_transitions = pl.when(pl.col("idx_transitions").is_null())
+                .then([])
+                .otherwise(pl.col("idx_transitions")),
             weight = pl.lit(take_every),
         )
     )
     
     # Combine
     callset_df = pl.concat([cand_df, other_df])
-
+    
     if sample_every is not None:
         callset_df = callset_df.gather_every(sample_every)
     
@@ -2004,8 +2135,6 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
             ]).list.diff(null_behavior="drop").alias("between_high_quality_snps_bp")
         )
     )
-    
-    callset_df = callset_df.collect(streaming=True)
     
     # Bootstrap if needed
     if bootstrap:

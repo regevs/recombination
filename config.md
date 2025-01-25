@@ -6,7 +6,7 @@ The largest unit is **sample_set** which is a set of samples from the same indiv
 
 An **assmebly** is the result of the de-novo assembly of a sample set. This could be done in the pipeline or obtained from another source.
 
-Within a sample set, there are **sample**-s, which in principle correspond to a single physical sample. A single sample will include one or more flow cells.
+Within a sample set, there are **sample_id**-s, which in principle correspond to a single physical sample. A single sample will include one or more flow cells.
 
 Each **flow_cell** corresponds to a reads data file derived from a flow cell. This is expected to be a `fastq.gz` file after read filtering.
 
@@ -15,11 +15,11 @@ Each flow cell should be defined a **flow_cell_type**, which defines a subset of
 ## Definition
 This is all defined in a `tsv` file pointed to in the config file (see below). The format is:
 ```
-sample_set  sample  flow_cell   flow_cell_type  path
+sample_set  sample_id  flow_cell   flow_cell_type  path
 ```
 Here is an example:
 ```
-sample_set  sample  flow_cell   flow_cell_type  path
+sample_set  sample_id  flow_cell   flow_cell_type  path
 NA123       NA123a  m84046_230701_234987_s1 sequel_ii   /path/to/m84046_230701_234987_s1.ccs.filtered.fastq.gz
 NA123       NA123a  m84046_230701_010431_s2 revio   /path/to/m84046_230701_010431_s2.ccs.filtered.fastq.gz
 NA123       NA123b  m84046_230701_010431_s2 revio   /path/to/m84046_230701_010431_s2.ccs.filtered.fastq.gz
@@ -117,7 +117,7 @@ T2T_scaffolds/
         ...
 alignments/
     sample_set/
-        sample/
+        sample_id/
             flow_cell/
                 T2T_scaffolds/
                     haplotype_1/
@@ -133,7 +133,7 @@ alignments/
 
 read_analysis/
     sample_set/
-        sample/
+        sample_id/
             flow_cell/
                 chrN/
                     read_refinement.parquet
@@ -142,12 +142,7 @@ read_analysis/
                     haplotype_1/
                         phase_and_haplotag files...
                     haplotype_2/
-                        phase_and_haplotag files...
-            genome_coverage/
-                haplotype_1/
-                    calculate_genome_coverage_on_haplotype files...
-                haplotype_2/
-                    calculate_genome_coverage_on_haplotype files...
+                        phase_and_haplotag files...                    
             reads/
                 chrN/
                     all_reads.parquet
@@ -160,8 +155,20 @@ read_analysis/
                     haplotype_2
                         coverage_for_all_events (candidate_reads) files...
                         coverage_for_all_events (all_reads) files...
-                    plots/
-                        dashboard files...
+        genome_coverage/
+            chrN/
+                haplotype_1/
+                    calculate_genome_coverage_on_haplotype files...
+                    calculate_total_genome_coverage_on_haplotype files...
+                haplotype_2/
+                    calculate_genome_coverage_on_haplotype files...
+                    calculate_total_genome_coverage_on_haplotype files...
+plots/
+    sample_set/
+        sample_id/
+            flow_cell/
+                chrN/
+                    dashboard files...         
 
 ```
 

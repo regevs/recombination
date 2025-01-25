@@ -511,3 +511,22 @@ rule minimap2_contigs_back_to_scaffold_final:
 #             "{bedtools_path} groupby -i stdin -g 1,2,3,4 -c 16 -o sum "
 #             " > {output.bed}"
 #         )
+
+
+
+
+# rule intersect_coverage_two_haplotypes:
+#     input:
+#         bedgraph1 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#                     / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap1.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#         bedgraph2 = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#                     / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hap2.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#     output:
+#         bedgraph = Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds/") \
+#                     / "{focal_sample_id}" / "{focal_sample_id}.{chrom}.hapintersection.minimap2.sorted.primary_alignments.hifiasm_haplotagged_{certainty}.coverage.bedgraph",
+#     resources:
+#         mem_mb=4000,
+#     run:
+#         shell(
+#             "{bedtools_path} intersect -a {input.bedgraph1} -b {input.bedgraph2} -wo > {output.bedgraph}"
+#         )

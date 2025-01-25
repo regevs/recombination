@@ -39,6 +39,9 @@ pacbio_revio_binned_params = {
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
 
+aut_chrom_names_ragtag = [x + "_RagTag" for x in aut_chrom_names]
+chrom_names_ragtag = [x + "_RagTag" for x in chrom_names]
+
 # ---------------------------------------------------------------------------------
 # Sample lists
 

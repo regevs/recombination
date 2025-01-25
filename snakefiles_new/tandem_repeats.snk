@@ -4,11 +4,9 @@
 
 rule run_trf:
     input:
-        fasta = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+        fasta = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta",
     output:
-        dat = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta.{chrom}.trf.dat",
+        dat = output_path / "T2T_scaffolds/{sample_set}/{chrom}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.trf.dat",
     resources:
         mem_mb=64000,
     run:
@@ -16,73 +14,41 @@ rule run_trf:
         # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
         # Note '-l 10' - supports <10Mbp TR arrays, likely to be enough for T2T (centromeres)
         shell(
-            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "awk -v seq=\"{wildcards.chrom}_RagTag\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
             "{trf_path} - 2 6 6 80 10 50 500 -ngs -h -l 10 "
             "> {output.dat}"
         )
 
 rule run_trf_final:
     input:
-        dat = [str(hap_scaffolds_path \
-                    / f"{focal_sample_id}" / f"haplotype_{haplotype}" / f"ragtag.scaffold.expanded.fasta.{chrom}_RagTag.trf.dat") \
-            for focal_sample_id in ["PD50489e"]
-            for chrom in ["chr2"]
+        dat = [str(output_path / f"T2T_scaffolds/{sample_set}/{chrom}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.trf.dat") \
+            for sample_set in sample_sets
+            for chrom in aut_chrom_names
             for haplotype in [1,2]]
-
-
-rule run_trf_testparams:
-    input:
-        fasta = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
-    output:
-        dat = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta.{chrom}.trf_test.dat",
-    resources:
-        mem_mb=64000,
-    run:
-        # Extract single fasta sequence and run TRF
-        # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
-        # Note '-l 10' - supports <10Mbp TR arrays, likely to be enough for T2T (centromeres)
-        shell(
-            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
-            "{trf_path} - 2 4 4 80 10 50 500 -ngs -h -l 10 "
-            "> {output.dat}"
-        )
-
-rule run_trf_testparams_final:
-    input:
-        dat = [str(hap_scaffolds_path \
-                    / f"{focal_sample_id}" / f"haplotype_{haplotype}" / f"ragtag.scaffold.expanded.fasta.{chrom}_RagTag.trf_test.dat") \
-            for focal_sample_id in ["PD50508b"]
-            for chrom in ["chr3"]
-            for haplotype in [1,2]]
-
 
 # ------------------------------------------------------------------------------------------------------------------------
 # sdust (Heng Li implementation, https://github.com/lh3/sdust)
 #
 rule run_sdust:
     input:
-        fasta = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta",
+        fasta = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta",
     output:
-        dat = hap_scaffolds_path \
-            / "{focal_sample_id}" / "haplotype_{haplotype}" / "ragtag.scaffold.expanded.fasta.{chrom}.sdust.tsv",
+        dat = output_path / "T2T_scaffolds/{sample_set}/{chrom}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.sdust.dat",
     resources:
         mem_mb=4000,
     run:
         # Extract single fasta sequence and run sdust
         # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
         shell(
-            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "awk -v seq=\"{wildcards.chrom}_RagTag\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
             "{sdust_path} -w 64 -t 20 - "
             "> {output.dat}"
         )
 
 rule run_sdust_final:
     input:
-        dat = [str(hap_scaffolds_path \
-                    / f"{focal_sample_id}" / f"haplotype_{haplotype}" / f"ragtag.scaffold.expanded.fasta.{chrom}_RagTag.sdust.tsv") \
-            for focal_sample_id in ["PD50489e"]
-            for chrom in ["chr2"]
-            for haplotype in [1,2]]            
+        dat = [str(output_path / f"T2T_scaffolds/{sample_set}/{chrom}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.sdust.dat") \
+            for sample_set in sample_sets
+            for chrom in aut_chrom_names
+            for haplotype in [1,2]]
+      

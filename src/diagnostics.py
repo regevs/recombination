@@ -17,6 +17,30 @@ import fastq as fq
 from . import annotate_old
 
 
+from scipy.stats import binom
+def binom_test_array(successes, failures, p=0.5):
+    """
+    Perform a binomial test on arrays of successes (k) and trials (n).
+    Parameters:
+        successes (array-like): Number of successes.
+        failures (array-like): Number of failures.
+        p (float): Null hypothesis probability of success.
+    Returns:
+        np.ndarray: Array of p-values.
+    """
+    k_array = np.asarray(successes)
+    n_array = np.asarray(successes + failures)
+
+    # Compute cumulative probabilities
+    cdf_lower = binom.cdf(k_array, n_array, p)  # P(X <= k)
+    cdf_upper = 1 - binom.cdf(k_array - 1, n_array, p)  # P(X >= k)
+    
+    # Two-tailed p-value
+    p_values = 2 * np.minimum(cdf_lower, cdf_upper)
+    p_values = np.clip(p_values, 0, 1)  # Ensure p-values are in [0, 1]
+    
+    return p_values
+
 # sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
 # import hapfusion
 # from hapfusion import bamlib
@@ -587,7 +611,7 @@ def extract_high_conf_events(
         .with_columns(
             (pl.col("fits1") > pl.col("fits2")).cast(pl.Int32).alias("fits1_more"),
         )
-        .drop(columns=["fits1", "fits2"])
+        .drop(["fits1", "fits2"])
     )
 
     return events_df
@@ -834,17 +858,19 @@ def phase_and_haplotag(
 
 def add_phasing_coverage_annotation(
     snps_df,
-    hap_and_certainty_to_bedgraph,
+    #hap_and_certainty_to_bedgraph,
+    hap_column_bedgraph_list,
     condition,
 ):
     #snps_df = snps_df.lazy()
 
     # Add information about coverage
-    for k, bedgraph_filename in hap_and_certainty_to_bedgraph.items():
-        haplotype, certainty = k
+    #for k, bedgraph_filename in hap_and_certainty_to_bedgraph.items():
+    for haplotype, coverage_column_name, bedgraph_filename in hap_column_bedgraph_list:
+        #haplotype, certainty = k
         
         ref_start_column_name = f"ref{haplotype}_start"
-        coverage_column_name = f"hap{haplotype}_certainty_{certainty}_coverage"
+        #coverage_column_name = f"hap{haplotype}_certainty_{certainty}_coverage"
         
         # Open the coverage bedgraph
         covdf = pl.read_csv(
@@ -937,12 +963,13 @@ def add_tandem_repeat_finder_annotation(
             .select([ref_start_column_name])
             .unique([ref_start_column_name])
             .sort(by=ref_start_column_name)
-            .collect(streaming=True)
+            .collect(streaming=True)            
             .set_sorted(ref_start_column_name)
             .join_asof(
                 (trf_df                    
                     .select(["start_pos_0based", "end_pos_0based", "repeat_length", "n_copies"])
                     .collect(streaming=True)
+                    .sort("start_pos_0based")
                     .set_sorted("start_pos_0based")
                 ),
                 left_on=ref_start_column_name,
@@ -1054,24 +1081,42 @@ def add_sdust_annotation(
 
 def add_allele_coverage_annotation(
     events_df,
+    all_events_of_sample_lazy_df,
     condition,
 ):
-    df1 = (events_df
+    # df1 = (events_df
+    #     .filter(condition)
+    #     .filter("is_snp")
+    #     .group_by("ref1_start", "op1")
+    #     .len()
+    #     .group_by("ref1_start")
+    #     .agg(allele_coverage_hap1 = pl.col("len").min())
+    # )
+
+    # df2 = (events_df
+    #     .filter(condition)
+    #     .filter("is_snp")
+    #     .group_by("ref2_start", "op2")
+    #     .len()
+    #     .group_by("ref2_start")
+    #     .agg(allele_coverage_hap2 = pl.col("len").min())
+    # )
+    df1 = (all_events_of_sample_lazy_df
         .filter(condition)
         .filter("is_snp")
-        .group_by("ref1_start", "op1")
-        .len()
-        .group_by("ref1_start")
-        .agg(allele_coverage_hap1 = pl.col("len").min())
+        .filter(pl.col("op1") == 7)
+        .group_by("ref1_start")        
+        .len().rename({"len": "allele_coverage_hap1"})
+        .collect(streaming=True)
     )
 
-    df2 = (events_df
+    df2 = (all_events_of_sample_lazy_df
         .filter(condition)
         .filter("is_snp")
-        .group_by("ref2_start", "op2")
-        .len()
+        .filter(pl.col("op2") == 7)
         .group_by("ref2_start")
-        .agg(allele_coverage_hap2 = pl.col("len").min())
+        .len().rename({"len": "allele_coverage_hap2"})
+        .collect(streaming=True)
     )
 
     events_df = (events_df
@@ -1085,9 +1130,38 @@ def add_allele_coverage_annotation(
             on=["ref2_start"],
             how="left",
         )
+        .with_columns(
+            pl.col("allele_coverage_hap1").fill_null(0),
+            pl.col("allele_coverage_hap2").fill_null(0),
+        )
     )
 
     return events_df    
+
+def add_coverage_balance_annotation(
+    events_df,
+    certainty,
+):
+
+    # Add coverage balance p_value
+    events_df = events_df.with_columns(
+        pl.Series(
+            f"hap_certainty_{certainty}_coverage_balance_p",
+            binom_test_array(
+                events_df[f"hap1_certainty_{certainty}_coverage"],
+                events_df[f"hap2_certainty_{certainty}_coverage"],
+            ),
+        ),
+        pl.Series(
+            f"allele_coverage_balance_p",
+            binom_test_array(
+                events_df[f"allele_coverage_hap1"],
+                events_df[f"allele_coverage_hap2"],
+            ),
+        ),
+    )
+
+    return events_df
 
 def add_high_confidence_annotation(
     events_df,
@@ -1112,24 +1186,37 @@ def add_high_confidence_annotation(
 
     return events_df
 
+
+
 def add_high_quality_annotation(
     events_df,
     input_column_prefix = "is_high_conf",
     output_column_prefix = "is_high_quality",
     phased_coverage_min = 3,
     allele_coverage_min = 3,
+    balance_p_value_threshold = 0,
+    unassigned_reads_max = 10000,
 ):
     events_df = events_df.with_columns((
             pl.col(input_column_prefix + "_event") & \
             (pl.col("hap1_certainty_0.95_coverage") >= phased_coverage_min) & 
             (pl.col("hap2_certainty_0.95_coverage") >= phased_coverage_min) &
             (pl.col("allele_coverage_hap1") >= allele_coverage_min) &
-            (pl.col("allele_coverage_hap2") >= allele_coverage_min)
+            (pl.col("allele_coverage_hap2") >= allele_coverage_min) &
+            (pl.col("hap_certainty_0.95_coverage_balance_p") >= balance_p_value_threshold) &
+            (pl.col("allele_coverage_balance_p") >= balance_p_value_threshold) & 
+            (
+                pl.when(unassigned_reads_max > 0).then(
+                    (pl.col("hap1_total_coverage") == pl.col("hap2_total_coverage")) &      # otherwise it's a weird SNP
+                    ((pl.col("hap1_total_coverage") - pl.col("hap1_certainty_0.95_coverage") - pl.col("hap2_certainty_0.95_coverage")) <= unassigned_reads_max)
+                ).otherwise(pl.lit(True))
+            )
         ).alias(output_column_prefix + "_event")
     )
     
     events_df = events_df.with_columns(
-        (pl.col(output_column_prefix + "_event") & pl.col(input_column_prefix + "_snp")).alias(output_column_prefix + "_snp")    )
+        (pl.col(output_column_prefix + "_event") & pl.col(input_column_prefix + "_snp")).alias(output_column_prefix + "_snp")    
+    )
     
 
     return events_df

@@ -6,6 +6,8 @@ import os
 import subprocess
 import pickle
 import re
+import pysam
+import glob
 
 from src import liftover, annotate, diagnostics, dashboard, inference, IDs
 
@@ -15,8 +17,9 @@ from src import liftover, annotate, diagnostics, dashboard, inference, IDs
 aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
 chrom_names = aut_chrom_names + ["chrX", "chrY"]
 
-aut_chrom_names_ragtag = [x + "_RagTag" for x in aut_chrom_names]
-chrom_names_ragtag = [x + "_RagTag" for x in chrom_names]
+if "chroms" in config.keys():
+    chrom_names = config["chroms"].split(",")
+    aut_chrom_names = chrom_names
 
 
 # ---------------------------------------------------------------------------------
@@ -40,14 +43,21 @@ data_df = pd.read_csv(config["data_table_path"], sep="\s+", header=0, index_col=
 
 # Sample sets to work on
 if "sample_sets" in config.keys():
-    sample_sets = config["sample_sets"].split(",")
+    sample_sets = str(config["sample_sets"]).split(",")
     data_df = data_df[data_df["sample_set"].isin(sample_sets)]
 else:
     sample_sets = list(data_df["sample_set"].unique())
 
-# Convenience dicts
-flow_cell_to_path = {R.flow_cell:R.path for R in data_df.itertuples()}
-flow_cell_to_type = {R.flow_cell:R.flow_cell_type for R in data_df.itertuples()}
+# Convenience dicts and lists
+data_rows = list(data_df.itertuples())
+
+flow_cell_to_path = {R.flow_cell:R.path for R in data_rows}
+flow_cell_to_type = {R.flow_cell:R.flow_cell_type for R in data_rows}
+
+flow_cell_to_params = {}
+for R in data_rows:
+    flow_cell_to_params[R.flow_cell] = config["qc_parameters"]
+    flow_cell_to_params[R.flow_cell].update(config["flow_cell_types"][R.flow_cell_type])
 
 # Parse assemblies if exist
 if "assembly_table_path" in config.keys():
@@ -61,11 +71,11 @@ else:
 # ------------------------------------------------------------------------------------------------------------------------
 # Import other rules
 #
-# include: "snakefiles_new/read_analysis.snk"
-# include: "snakefiles_new/tandem_repeats.snk"
+include: "snakefiles_new/read_analysis.snk"
+include: "snakefiles_new/tandem_repeats.snk"
+include: "snakefiles_new/tract_length.snk"
 # include: "snakefiles_new/inference.snk"
 # include: "snakefiles_new/prdm9.snk"
-# include: "snakefiles_new/tract_length.snk"
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Assembly
@@ -85,11 +95,11 @@ rule index_fastq:
 
 rule index_fastq_final:
     input:
-        [R.path + ".fxi" for R in data_df.itertuples()]
+        [R.path + ".fxi" for R in data_rows]
 
 def get_all_fastq_gz_for_sample_set(wildcards):
     res = []
-    for R in data_df.itertuples():
+    for R in data_rows:
         if R.sample_set == wildcards.sample_set:
             res.append(R.path)
     return res
@@ -98,37 +108,59 @@ rule hifiasm_assembly:
     input:
         fastq_gzs = get_all_fastq_gz_for_sample_set,
     output:
-        gfa1 = temp(output_path / "assemblies/{sample_set}/{sample_set}.asm.bp.hap1.p_ctg.gfa"),
-        gfa2 = temp(output_path / "assemblies/{sample_set}/{sample_set}.asm.bp.hap2.p_ctg.gfa"),
         fasta1 = output_path / "assemblies/{sample_set}/haplotype_1.fasta",
         fasta2 = output_path / "assemblies/{sample_set}/haplotype_2.fasta",
-    threads: 32,
+    threads: 32
+    retries: 3
     resources: 
-        mem_mb = 320000,
+        mem_mb = lambda wildcards, attempt: [1000, 320000, 640000][attempt-1],
     run:
+        # TODO: Separate this if to a low-memory 1-thread rule
         # If does not exist but an assembly exist in the assemblies table, create a symlink
         if wildcards.sample_set in assemblies_dict.keys():  
             os.symlink(assemblies_dict[wildcards.sample_set].format(haplotype=1), output.fasta1)
             os.symlink(assemblies_dict[wildcards.sample_set].format(haplotype=2), output.fasta2)
         else:
             # Otherwise, do the assembly            
-            prefix = output.gfa1.replace(".bp.hap1.p_ctg.gfa", "")
+            gfa1_path = str(output.fasta1).replace(
+                "haplotype_1.fasta", 
+                f"{wildcards.sample_set}.asm.bp.hap1.p_ctg.gfa",
+            )
+            gfa2_path = str(output.fasta2).replace(
+                "haplotype_2.fasta", 
+                f"{wildcards.sample_set}.asm.bp.hap2.p_ctg.gfa",
+            )
+
+            prefix = gfa1_path.replace(".bp.hap1.p_ctg.gfa", "")
             shell(
                 f"{hifiasm_path} -o {prefix} -t {threads} {input.fastq_gzs}"
             )
 
             # Convert to fasta
             shell(
-                "awk '/^S/{{print \">\"$2;print $3}}' {output.gfa1} > {output.fasta1}"
+                "awk '/^S/{{print \">\"$2;print $3}}' {gfa1_path} > {output.fasta1}"
             )
+            shell("rm {gfa1_path}")
 
             shell(
-                "awk '/^S/{{print \">\"$2;print $3}}' {output.gfa2} > {output.fasta2}"
+                "awk '/^S/{{print \">\"$2;print $3}}' {gfa2_path} > {output.fasta2}"
             )
+            shell("rm {gfa2_path}")
+
+
+rule index_fasta:
+    input:
+        fasta = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta",
+    output:
+        fasta_fai = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai",
+    run:
+        shell(
+            "{samtools_path} faidx {input.fasta}"
+        )
 
 rule hifiasm_assembly_final:    
     input:
-        [str(output_path / f"assemblies/{sample_set}/haplotype_{haplotype}.fasta") \
+        [str(output_path / f"assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai") \
                 for sample_set in sample_sets \
                 for haplotype in [1,2]]
 
@@ -139,18 +171,20 @@ rule hifiasm_assembly_final:
 rule scaffold_haplotypes:
     input:
         query_fasta = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta",
+        query_fasta_fai = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai",
         reference_fasta = config["files"]["t2t_reference_path"],
-    output:
+    params:
         agp = temp(output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.agp"),
         fasta = temp(output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.fasta"),
         expanded_fasta = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta",
+    output:
         expanded_fai = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.fai",
     threads: 16
     resources:
         mem_mb=50000,
     run:
         # To infer gaps: " -r -g 2 -m 100000000 "
-        output_directory = Path(output.fasta).parent
+        output_directory = Path(params.fasta).parent
         shell(
             "{ragtag_path} scaffold {input.reference_fasta} {input.query_fasta}"
             " -o {output_directory} "
@@ -158,19 +192,19 @@ rule scaffold_haplotypes:
             " --aligner {minimap2_path} "
             " -t {threads} "
         )
-        with open(output.fasta, 'r') as infile:
-            with open(output.expanded_fasta, 'w') as outfile:
+        with open(params.fasta, 'r') as infile:
+            with open(params.expanded_fasta, 'w') as outfile:
                 # Replace every occurrence of 100-30000 Ns (gap inserted by RagTag) or more by 30,000 exactly.
                 # This avoid read spanning consecutive contigs, but does not explode the expanded sequence.
                 outfile.write(re.sub(r'N{100,30000}', 'N'*30000, infile.read()))
 
         shell(
-            "{samtools_path} faidx {output.expanded_fasta}"
+            "{samtools_path} faidx {params.expanded_fasta}"
         )
 
 rule scaffold_haplotypes_final:
     input:
-        fasta = [str(output_path / f"T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta") \
+        fasta = [str(output_path / f"T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.fai") \
             for sample_set in sample_sets \
             for haplotype in [1,2]]            
 
@@ -188,9 +222,10 @@ rule minimap2_to_haplotype:
             / "minimap2.sorted.primary_alignments.bam",
         bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/T2T_scaffolds/haplotype_{haplotype}" \
             / "minimap2.sorted.primary_alignments.bam.bai",            
-    threads: 32,
+    threads: 32
+    retries: 3
     resources:
-        mem_mb = lambda wildcards, attempt: attempt * 50000,
+        mem_mb = lambda wildcards, attempt: [160000, 320000, 640000][attempt-1],
     run:
         # 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
         shell(
@@ -210,10 +245,10 @@ rule minimap2_to_haplotype:
         
 rule minimap2_to_haplotype_final:
     input:
-        [str(output_path / f"alignments/{R.sample_set}/{R.sample}/{R.flow_cell}/T2T_scaffolds/haplotype_{haplotype}" \
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/T2T_scaffolds/haplotype_{haplotype}" \
             / "minimap2.sorted.primary_alignments.bam") \             
             for haplotype in [1,2] \
-            for R in data_df.itertuples()]
+            for R in data_rows]
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Mapping to references
@@ -229,7 +264,8 @@ rule minimap2_to_T2T:
             / "minimap2.sorted.primary_alignments.bam",
         bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/T2T_reference/" \
             / "minimap2.sorted.primary_alignments.bam.bai",            
-    threads: 32,
+    threads: 32
+    retries: 3
     resources:
         mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
@@ -239,7 +275,7 @@ rule minimap2_to_T2T:
             "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
             "-t {threads} "
             "-ax map-hifi --cs=short --eqx --MD "
-            "{input.denovo_reference} "
+            "{input.reference} "
             "{input.fastq_gz} "
             "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
             "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
@@ -251,10 +287,10 @@ rule minimap2_to_T2T:
         
 rule minimap2_to_T2T_final:
     input:
-        [str(output_path / f"alignments/{R.sample_set}/{R.sample}/{R.flow_cell}/T2T_reference/" \
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/T2T_reference/" \
             / "minimap2.sorted.primary_alignments.bam") \             
             for haplotype in [1,2] \
-            for R in data_df.itertuples()]
+            for R in data_rows]
 
 # grch37
 rule minimap2_to_grch37:
@@ -266,7 +302,8 @@ rule minimap2_to_grch37:
             / "minimap2.sorted.primary_alignments.bam",
         bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch37_reference/" \
             / "minimap2.sorted.primary_alignments.bam.bai",            
-    threads: 32,
+    threads: 32
+    retries: 3
     resources:
         mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
@@ -276,7 +313,7 @@ rule minimap2_to_grch37:
             "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
             "-t {threads} "
             "-ax map-hifi --cs=short --eqx --MD "
-            "{input.denovo_reference} "
+            "{input.reference} "
             "{input.fastq_gz} "
             "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
             "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
@@ -288,10 +325,10 @@ rule minimap2_to_grch37:
         
 rule minimap2_to_grch37_final:
     input:
-        [str(output_path / f"alignments/{R.sample_set}/{R.sample}/{R.flow_cell}/grch37_reference/" \
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/grch37_reference/" \
             / "minimap2.sorted.primary_alignments.bam") \             
             for haplotype in [1,2] \
-            for R in data_df.itertuples()]
+            for R in data_rows]
 
 
 # grch38
@@ -304,7 +341,8 @@ rule minimap2_to_grch38:
             / "minimap2.sorted.primary_alignments.bam",
         bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
             / "minimap2.sorted.primary_alignments.bam.bai",            
-    threads: 32,
+    threads: 32
+    retries: 3
     resources:
         mem_mb = lambda wildcards, attempt: attempt * 50000,
     run:
@@ -314,7 +352,7 @@ rule minimap2_to_grch38:
             "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
             "-t {threads} "
             "-ax map-hifi --cs=short --eqx --MD "
-            "{input.denovo_reference} "
+            "{input.reference} "
             "{input.fastq_gz} "
             "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
             "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
@@ -326,10 +364,10 @@ rule minimap2_to_grch38:
         
 rule minimap2_to_grch38_final:
     input:
-        [str(output_path / f"alignments/{R.sample_set}/{R.sample}/{R.flow_cell}/grch38_reference/" \
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/grch38_reference/" \
             / "minimap2.sorted.primary_alignments.bam") \             
             for haplotype in [1,2] \
-            for R in data_df.itertuples()]               
+            for R in data_rows]               
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Extract reference starts from bams
@@ -351,7 +389,7 @@ rule extract_ref_starts_from_bam:
 
 rule extract_ref_starts_from_bam_final:
     input:
-        csv = [str(output_path / f"alignments/{R.sample_set}/{R.sample}/{R.flow_cell}/{reference}/" \
+        csv = [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{reference}/" \
             / "minimap2.sorted.primary_alignments.ref_starts.csv.gz") \
             for reference in ["T2T_reference", "grch37_reference", "grch38_reference"]
-            for R in data_df.itertuples()]
+            for R in data_rows]

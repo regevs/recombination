@@ -1,18 +1,11 @@
 # This point to the table described above
-data_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/CEPH.tsv
+data_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/Sudmant.tsv
 
 # Optional sublist
-## QCs samples 20241204: NA12878,NA12879,NA12881,NA12882,NA12886,NA12890,NA12891,NA12892,200084,200085,200102,200104
-## QCs samples 20241205: NA12878,NA12879,NA12881,NA12882,NA12886,NA12890,NA12891,NA12892,200084,200085,200102,200104
-sample_sets: NA12878,NA12879,NA12881,NA12882,NA12886,NA12892,200084,200085,200102,200104
-#sample_sets: 200080
-#chroms: chr1
-
-# Path to assembly paths
-assembly_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/CEPH_assemblies.tsv
+#sample_sets: 200080,200082
 
 # Where the output of this run will be
-output_dir_path: /lustre/scratch122/tol/projects/sperm/results/CEPH_20241119/
+output_dir_path: /lustre/scratch122/tol/projects/sperm/results/Sudmant_20241121/
 
 # QC parameters that are common to all flow cell types
 qc_parameters:    
@@ -25,24 +18,14 @@ qc_parameters:
   allele_coverage_min: 3
   GC_tract_mean: 30
   read_margin_in_bp: 5000
-  balance_p_value_threshold: 0
-  unassigned_reads_max: 10000
+  balance_p_value_threshold: 0   # to keep compatible with previous results 
+  unassigned_reads_max: 10000    # to keep compatible with previous results 
 
 # QC parameters per flow cell type
 flow_cell_types:
-  sequel_ii: 
-    base_qual_min_detection: 60
-    base_qual_min_classification: 30
-    read_trimming_detection: 1500
-    read_trimming_classification: 500
   revio_40: 
     base_qual_min_detection: 40
     base_qual_min_classification: 30
-    read_trimming_detection: 400
-    read_trimming_classification: 200
-  revio_50: 
-    base_qual_min_detection: 50
-    base_qual_min_classification: 40
     read_trimming_detection: 400
     read_trimming_classification: 200
       

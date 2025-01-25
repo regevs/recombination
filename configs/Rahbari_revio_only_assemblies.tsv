@@ -1,0 +1,8 @@
+sample_set	fasta_wildcard_path
+PD50521b_PD50521e	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD50521b_PD50521e/haplotype_{haplotype}.fasta
+PD50477f	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD50477f/haplotype_{haplotype}.fasta
+PD50523b	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD50523b/haplotype_{haplotype}.fasta
+PD50489e	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD50489e/haplotype_{haplotype}.fasta
+PD50508b_PD50508f	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD50508b_PD50508f/haplotype_{haplotype}.fasta
+PD50519d	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD50519d/haplotype_{haplotype}.fasta
+PD46180c	/lustre/scratch122/tol/projects/sperm/results/Rahbari_revio_only_subset_20250114/assemblies/PD46180c/haplotype_{haplotype}.fasta

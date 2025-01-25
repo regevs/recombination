@@ -7,15 +7,15 @@ import subprocess
 import pickle
 import re
 
-sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/himut/src")
-sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
+# sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/himut/src")
+# sys.path.append("/nfs/users/nfs_r/rs42/rs42/git/hapfusion/src")
 
-import hapfusion
-import hapfusion.bamlib
+# import hapfusion
+# import hapfusion.bamlib
 
-import himut
-import himut.bamlib
-import himut.phaselib
+# import himut
+# import himut.bamlib
+# import himut.phaselib
 
 from src import liftover, annotate, diagnostics, dashboard, inference, IDs
 

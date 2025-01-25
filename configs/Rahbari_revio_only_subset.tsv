@@ -1,0 +1,16 @@
+sample_set	sample_id	flow_cell	flow_cell_type	path
+PD50521b_PD50521e	PD50521b	m84047_240924_113521_s4	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50521b/02.revio/m84047_240924_113521_s4.ccs.filtered.fastq.gz
+PD50521b_PD50521e	PD50521e	m84093_241004_184906_s3	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50521e/02.revio/m84093_241004_184906_s3.ccs.filtered.fastq.gz
+PD50521b_PD50521e	PD50521e	m84093_241004_145012_s1	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50521e/02.revio/m84093_241004_145012_s1.ccs.filtered.fastq.gz
+PD50477f	PD50477f	m84047_241008_103735_s2	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50477f/02.revio/m84047_241008_103735_s2.ccs.filtered.fastq.gz
+PD50477f	PD50477f	m84047_240927_152506_s4	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50477f/02.revio/m84047_240927_152506_s4.ccs.filtered.fastq.gz
+PD50508b_PD50508f	PD50508b	m84047_240928_154242_s4	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50508b/02.revio/m84047_240928_154242_s4.ccs.filtered.fastq.gz
+PD50508b_PD50508f	PD50508b	m84047_240927_145249_s3	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50508b/02.revio/m84047_240927_145249_s3.ccs.filtered.fastq.gz
+PD50523b	PD50523b	m84093_241009_101414_s1	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50523b/02.revio/m84093_241009_101414_s1.ccs.filtered.fastq.gz
+PD50523b	PD50523b	m84098_240926_103217_s1	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50523b/02.revio/m84098_240926_103217_s1.ccs.filtered.fastq.gz
+PD50489e	PD50489e	m84047_240927_134858_s1	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50489e/02.revio/m84047_240927_134858_s1.ccs.filtered.fastq.gz
+PD50489e	PD50489e	m84047_240928_154242_s4	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50489e/02.revio/m84047_240928_154242_s4.ccs.filtered.fastq.gz
+PD50519d	PD50519d	m84098_240926_110433_s2	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50519d/02.revio/m84098_240926_110433_s2.ccs.filtered.fastq.gz
+PD50519d	PD50519d	m84047_240928_143808_s2	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD50519d/02.revio/m84047_240928_143808_s2.ccs.filtered.fastq.gz
+PD46180c	PD46180c	m84047_241008_114208_s4	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD46180c/02.revio/m84047_241008_114208_s4.ccs.filtered.fastq.gz
+PD46180c	PD46180c	m84047_240924_103047_s2	revio_unbinned	/lustre/scratch122/tol/projects/sperm/data/Rahbari/PD46180c/02.revio/m84047_240924_103047_s2.ccs.filtered.fastq.gz

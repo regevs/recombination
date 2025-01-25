@@ -1,4 +1,5 @@
 import pickle
+import numba
 
 rule infer_tract_length:
     input:
@@ -59,3 +60,101 @@ rule infer_tract_length_final:
             for sample_every, bootstrap, rep in \
                 [[1, 0, 0]] + [[1, 1, i] for i in range(100)]
         ]
+#### TODO CHANGE, very hacky
+ceph_good_samples = "NA12878,NA12879,NA12881,NA12882,NA12886,NA12892,200084,200085,200102,200104".split(',')
+rule infer_joint_tract_length:
+    input:
+        sperm_reads = [str(Path("/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/01.read_alignment/01.ccs/04.hifiasm/02.hifiasm_0.19.5-r592/02.chromosome_length_scaffolds") \
+            / f"{focal_sample_id}" / "reads" / f"{chrom}_RagTag.certainty_0.95.all_reads_structure_annotated.parquet") \
+                for focal_sample_id in IDs.rahbari_sample_ids \
+                for chrom in aut_chrom_names],
+        blood_reads = [str(output_path / f"read_analysis/{sample_id}/{sample_id}/reads/{chrom}/all_reads_structure_annotated.parquet")
+            for sample_id in ceph_good_samples
+            for chrom in aut_chrom_names
+        ]
+    output:
+        pcl = "/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/08.tract_length/joint_inference.sample_every={sample_every}.bootstrap={bootstrap}.rep={rep}.pcl",
+    resources:
+        mem_mb = 256*1000,
+        time_min = 60*5,
+    threads: 32,
+    run:
+        if wildcards.bootstrap == "1":
+            bootstrap = True
+        else:
+            bootstrap = False
+
+        rep = int(wildcards.rep)
+        sample_every = int(wildcards.sample_every)
+
+        blood_reads_df = pl.scan_parquet(input.blood_reads)
+        blood_callset_df = inference.generate_call_set(
+            blood_reads_df, 
+            ceph_good_samples, 
+            take_every=10, 
+            min_snps=3, 
+            sample_every=sample_every,
+            bootstrap=bootstrap,
+        )
+
+        sperm_reads_df = pl.scan_parquet(input.sperm_reads)
+        sperm_callset_df = inference.generate_call_set(
+            sperm_reads_df, 
+            IDs.rahbari_sample_ids, 
+            take_every=1, 
+            min_snps=3, 
+            sample_every=sample_every,
+            bootstrap=bootstrap,
+        )
+
+
+        res = inference.maximum_likelihood_all_reads_joint(
+            sperm_callset_df["read_length"].to_numpy(),
+            sperm_callset_df["high_quality_snp_positions"].to_numpy(),
+            sperm_callset_df["high_quality_snps_idx_transitions"].to_numpy(),
+            sperm_callset_df["between_high_quality_snps_cM"].to_numpy() * 1e-2,
+            sperm_callset_df["before_read_cM"].to_numpy() * 1e-2,
+            sperm_callset_df["after_read_cM"].to_numpy() * 1e-2,
+            # sperm_callset_df["between_high_quality_snps_bp"].to_numpy() * 1e-8,
+            # numba.typed.List(np.repeat(5000 * 1e-8, len(sperm_callset_df))),
+            # numba.typed.List(np.repeat(5000 * 1e-8, len(sperm_callset_df))),
+            sperm_callset_df["weight"].to_numpy(),
+
+            blood_callset_df["read_length"].to_numpy(),
+            blood_callset_df["high_quality_snp_positions"].to_numpy(),
+            blood_callset_df["high_quality_snps_idx_transitions"].to_numpy(),
+            blood_callset_df["between_high_quality_snps_bp"].to_numpy() * 1e-8,
+            numba.typed.List(np.repeat(5000 * 1e-8, len(blood_callset_df))),
+            numba.typed.List(np.repeat(5000 * 1e-8, len(blood_callset_df))),
+            blood_callset_df["weight"].to_numpy(),
+
+            q_range_sperm = (0.01, 0.5),   
+            q_range_blood = (1e-10, 0.5),   
+            
+            #m_range_sperm = (1e-10, 1-1e-10),
+            m_range_sperm = (0.8, 1-1e-10),
+            m_range_blood = (1e-10, 1-1e-10),
+            
+            GC_tract_mean_range = (10, 1000),
+            GC_tract_mean2_range = (100, 10000),
+            
+            prob_factor_range_sperm = (1, 1),
+            prob_factor_range_blood = (1e-10, 1),
+            
+            read_margin_in_bp = 5000,
+            
+            x0 = [
+                0.1, 0.1, 
+                0.98, 0.01,     
+                30, 1000, 
+                1.0, 1e-2,
+            ],
+        )
+
+        pickle.dump(res, open(output.pcl, "wb"))        
+
+rule infer_joint_tract_length_final:
+    input:
+        pcl = [f"/lustre/scratch126/casm/team154pc/sl17/03.sperm/02.results/08.tract_length/joint_inference.sample_every={sample_every}.bootstrap={bootstrap}.rep={rep}.pcl"
+            for sample_every, bootstrap, rep in \
+                [[1, 0, 0]]]

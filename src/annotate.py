@@ -311,42 +311,42 @@ def annotate_read_structure(
             CO_active_interval_start = pl.when(
                 pl.col("high_quality_snp_positions").list.len() >= 4,
             ).then(
-                pl.col("high_quality_snp_positions").list.get(1)
+                pl.col("high_quality_snp_positions").list.get(1, null_on_oob=True)
             ),
             CO_active_interval_end = pl.when(
                 pl.col("high_quality_snp_positions").list.len() >= 4,
             ).then(
-                pl.col("high_quality_snp_positions").list.get(-2)
+                pl.col("high_quality_snp_positions").list.get(-2, null_on_oob=True)
             ),
             NCO_active_interval_start = pl.when(
                 pl.col("high_quality_snp_positions").list.len() >= 3,
             ).then(
-                pl.col("high_quality_snp_positions").list.get(0)
+                pl.col("high_quality_snp_positions").list.get(0, null_on_oob=True)
             ),
             NCO_active_interval_end = pl.when(
                 pl.col("high_quality_snp_positions").list.len() >= 3,
             ).then(
-                pl.col("high_quality_snp_positions").list.get(-1)
+                pl.col("high_quality_snp_positions").list.get(-1, null_on_oob=True)
             ),
             mid_CO_active_interval_start = pl.when(
                 pl.col("mid_quality_snp_positions").list.len() >= 4,
             ).then(
-                pl.col("mid_quality_snp_positions").list.get(1)
+                pl.col("mid_quality_snp_positions").list.get(1, null_on_oob=True)
             ),
             mid_CO_active_interval_end = pl.when(
                 pl.col("mid_quality_snp_positions").list.len() >= 4,
             ).then(
-                pl.col("mid_quality_snp_positions").list.get(-2)
+                pl.col("mid_quality_snp_positions").list.get(-2, null_on_oob=True)
             ),
             mid_NCO_active_interval_start = pl.when(
                 pl.col("mid_quality_snp_positions").list.len() >= 3,
             ).then(
-                pl.col("mid_quality_snp_positions").list.get(0)
+                pl.col("mid_quality_snp_positions").list.get(0, null_on_oob=True)
             ),
             mid_NCO_active_interval_end = pl.when(
                 pl.col("mid_quality_snp_positions").list.len() >= 3,
             ).then(
-                pl.col("mid_quality_snp_positions").list.get(-1)
+                pl.col("mid_quality_snp_positions").list.get(-1, null_on_oob=True)
             ),
         )
         .with_columns(
@@ -358,35 +358,44 @@ def annotate_read_structure(
     )
 
     ### Add ref alignments
-    grch37_refs_df = (
-        pl.read_csv(
-            grch37_ref_starts_filename,
-            new_columns = ["read_name", "chrom", "grch37_reference_start"],
-            infer_schema_length=0,
+    grch37_refs_df = pl.concat([
+        (
+            pl.read_csv(
+                filename,
+                new_columns = ["read_name", "chrom", "grch37_reference_start"],
+                infer_schema_length=0,
+            )
+            .cast({"grch37_reference_start": pl.Int64})
+            .with_columns(
+                chrom = pl.concat_str([pl.lit("chr"), pl.col("chrom")]),
+            )
         )
-        .cast({"grch37_reference_start": pl.Int64})
-        .with_columns(
-            chrom = pl.concat_str([pl.lit("chr"), pl.col("chrom")]),
-        )
-    )
+        for filename in grch37_ref_starts_filename
+    ])
 
-    grch38_refs_df = (
-        pl.read_csv(
-            grch38_ref_starts_filename,
-            new_columns = ["read_name", "chrom", "grch38_reference_start"],
-            infer_schema_length=0,
+    grch38_refs_df = pl.concat([
+        (
+            pl.read_csv(
+                filename,
+                new_columns = ["read_name", "chrom", "grch38_reference_start"],
+                infer_schema_length=0,
+            )
+            .cast({"grch38_reference_start": pl.Int64})
         )
-        .cast({"grch38_reference_start": pl.Int64})
-    )
+        for filename in grch38_ref_starts_filename
+    ])
 
-    T2T_refs_df = (
-        pl.read_csv(
-            T2T_ref_starts_filename,
-            new_columns = ["read_name", "chrom", "T2T_reference_start"],
-            infer_schema_length=0,
+    T2T_refs_df = pl.concat([
+        (
+            pl.read_csv(
+                filename,
+                new_columns = ["read_name", "chrom", "T2T_reference_start"],
+                infer_schema_length=0,
+            )
+            .cast({"T2T_reference_start": pl.Int64})
         )
-        .cast({"T2T_reference_start": pl.Int64})
-    )
+        for filename in T2T_ref_starts_filename
+    ])
 
     reads_df = (reads_df
         .join(grch37_refs_df, on=["read_name", "chrom"], how="left")
@@ -746,8 +755,8 @@ def annotate_read_structure(
                 .with_columns(
                     high_quality_classification_in_detectable_class = pl.when( 
                         (pl.col("high_quality_classification_class").is_not_null()) &
-                        (pl.col("high_quality_snp_positions_alleles").list.get(0) == pl.col("high_quality_snp_positions_alleles").list.get(1)) &
-                        (pl.col("high_quality_snp_positions_alleles").list.get(-1) == pl.col("high_quality_snp_positions_alleles").list.get(-2))
+                        (pl.col("high_quality_snp_positions_alleles").list.get(0, null_on_oob=True) == pl.col("high_quality_snp_positions_alleles").list.get(1, null_on_oob=True)) &
+                        (pl.col("high_quality_snp_positions_alleles").list.get(-1, null_on_oob=True) == pl.col("high_quality_snp_positions_alleles").list.get(-2, null_on_oob=True))
                     ).then(
                         pl.when(
                             pl.col("high_quality_snps_transitions").list.sum() == 1
