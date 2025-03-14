@@ -87,6 +87,7 @@ def start_igv(
     reference_fasta_filename,
     chrom,
     slack = 30,
+    maxHeight = 700,
 ):
     import igv_notebook
 
@@ -114,7 +115,7 @@ def start_igv(
                     "type": "alignment",
                     "colorBy": "tag",
                     "colorByTag": "YC",
-                    "maxHeight": 700,
+                    "maxHeight": maxHeight,
                     "autoHeight": True,
                     "sort": {
                         "chr": chrom,

@@ -535,6 +535,9 @@ rule create_dashboard_bams:
     output:
         plots_dir = directory(output_path / "plots/{sample_set}/{sample_id}/{chrom}/"),
         done = output_path / "plots/{sample_set}/{sample_id}/{chrom}/done",
+    retries: 3
+    resources: 
+        mem_mb = lambda wildcards, attempt: [4000, 8000, 32000][attempt-1],
     run:
         dashboard.write_all_bams(
             input.all_reads_parquet,
@@ -655,7 +658,19 @@ rule annotate_all_reads_structure:
         H3K4me3 = "/lustre/scratch122/tol/projects/sperm/data/references/08.ENCODE/01.H3K4me3_testis/ENCFF608MKN.bigWig",            
         CTCF = "/lustre/scratch122/tol/projects/sperm/data/references/08.ENCODE/02.CTCF_testis/ENCFF343ULH.bigWig",
 
-        classified_reads_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/reads/{chrom}/classified_reads.parquet"
+        classified_reads_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/reads/{chrom}/classified_reads.parquet",
+
+        double_mismatches_per_read_all_files = lambda wc:
+            [
+                str(output_path / f"read_analysis/{R.sample_set}/{R.sample_id}/{R.flow_cell}" / "{chrom}/double_mismatches_per_read.parquet")
+                for R in data_rows if R.sample_id == wc.sample_id
+            ],
+
+        double_mismatches_per_read_at_sample_panel_all_files = lambda wc:
+            [
+                str(output_path / f"read_analysis/{R.sample_set}/{R.sample_id}/{R.flow_cell}" / "{chrom}/double_mismatches_per_read_sample_panel.parquet")
+                for R in data_rows if R.sample_id == wc.sample_id
+            ],
     output:
         all_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/reads/{chrom}/all_reads_structure_annotated.parquet",
     resources:
@@ -678,6 +693,8 @@ rule annotate_all_reads_structure:
             input.H3K4me3,
             input.CTCF,
             input.classified_reads_parquet,
+            input.double_mismatches_per_read_all_files,
+            input.double_mismatches_per_read_at_sample_panel_all_files,
             GC_tract_mean = P["GC_tract_mean"],
             min_mapq = P["map_qual_min"],
             max_total_mismatches = P["total_mismatches_max"],

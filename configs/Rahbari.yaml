@@ -3,14 +3,13 @@ data_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/Rahbari.tsv
 
 # Optional sublist
 #sample_sets: 200080,200082
-
-chroms: chr1
+#chroms: chr22
 
 # Path to assembly paths
 assembly_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/Rahbari_assemblies.tsv
 
 # Where the output of this run will be
-output_dir_path: /lustre/scratch122/tol/projects/sperm/results/Rahbari_20241121/
+output_dir_path: /lustre/scratch122/tol/projects/sperm/results/Rahbari_20250212/
 
 # QC parameters that are common to all flow cell types
 qc_parameters:    
@@ -59,3 +58,4 @@ files:
   t2t_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta
   grch37_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/01.grch37/human_g1k_v37_decoy.fasta
   grch38_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/02.grch38/Homo_sapiens_assembly38.fasta
+  reference_panel_vcf_filename: /lustre/scratch122/tol/projects/sperm/data/references/02.grch38/ALL.wgs.shapeit2_integrated_v1a.GRCh38.20181129.sites.decomposed.normalised.common_snps.vcf.bgz

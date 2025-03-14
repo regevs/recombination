@@ -1476,6 +1476,7 @@ def calculate_motif_distance_to_converted_snps_histogram(
     motif_strand_column,
     signal_column = None,
     max_dist=30000,
+    grch38_recombining_interval_threshold = None,
 ):
     H = np.zeros(max_dist*2 + 1)
     xs = np.arange(-max_dist, max_dist+1)
@@ -1681,6 +1682,7 @@ def get_sample_pairwise_tests(
                 "n1", "n2", 
                 "ks_pvalue", 
                 "AD_perm_pvalue"],
+        orient="row",
     ) 
 
     return pairwise_df   
@@ -1780,6 +1782,7 @@ def get_sample_vs_rest_tests(
     sample_vs_rest_signal_df = pl.DataFrame(
         rows,
         schema=["sample_id", "paper_label_id", "n_in_sample", "AD_perm_pvalue", "AD_perm_pvalue_agg", "ttest_pvalue_agg"],
+        orient="row",
     ).sort("AD_perm_pvalue")
         
     return sample_vs_rest_signal_df   
@@ -2077,9 +2080,9 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
     )
 
     #
-    # 2. Take a subset of reads without swithces
+    # 2. Take a subset of reads without switches
     #
-    # - High quality read (same strand, MAPQ, mismatches and clipping
+    # - High quality read (same strand, MAPQ, mismatches and clipping)
     # - Has enough coverage on both haplotypes
     # - Mapped to nonzero cM
     # - Has more than 1 SNP

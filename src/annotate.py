@@ -199,6 +199,8 @@ def annotate_read_structure(
     H3K4me3_filename,
     CTCF_filename,
     classified_reads_filename,
+    double_mismatches_per_read_all_files,
+    double_mismatches_per_read_at_sample_panel_all_files,
     GC_tract_mean = 30,
     min_mapq = 60,
     max_total_mismatches = 100,
@@ -705,6 +707,32 @@ def annotate_read_structure(
             CTCF_df, 
             on="read_name",
             how="left",
+        )
+    )
+
+    # Add double mismatches information
+    double_mismatches_per_read = pl.read_parquet(double_mismatches_per_read_all_files)
+    double_mismatches_per_read_at_sample_panel = pl.read_parquet(double_mismatches_per_read_at_sample_panel_all_files)
+
+    reads_df = (reads_df
+        .join(
+            double_mismatches_per_read,
+            on="read_name",
+            how="left",
+        )
+        .join(
+            double_mismatches_per_read_at_sample_panel,
+            on="read_name",
+            how="left",
+        )
+    )
+
+    # Add contamination information
+    reads_df = (reads_df
+        .with_columns(
+            is_contamination = \
+                (pl.col("n_double_mismatches_at_panel_snps") > 0) |
+                (pl.col("n_double_mismatches_at_sample_panel_snps") > 0)
         )
     )
 

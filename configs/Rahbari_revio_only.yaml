@@ -3,7 +3,7 @@ data_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/Rahbari_revio_only
 
 # Optional sublist
 #sample_sets: 200080,200082
-#chroms: chr1
+chroms: chr22
 
 # Path to assembly paths
 assembly_table_path: /nfs/users/nfs_r/rs42/rs42/git/sperm/configs/Rahbari_revio_only_assemblies.tsv

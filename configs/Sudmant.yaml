@@ -44,3 +44,4 @@ files:
   t2t_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/03.t2t-chm13/chm13v2.0.fasta
   grch37_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/01.grch37/human_g1k_v37_decoy.fasta
   grch38_reference_path: /lustre/scratch126/casm/team154pc/sl17/03.sperm/01.data/07.references/02.grch38/Homo_sapiens_assembly38.fasta
+  reference_panel_vcf_filename: /lustre/scratch122/tol/projects/sperm/data/references/02.grch38/ALL.wgs.shapeit2_integrated_v1a.GRCh38.20181129.sites.decomposed.normalised.common_snps.vcf.bgz

@@ -131,7 +131,7 @@ def diagnose_events(
     )
 
 #
-# This function takes the cigar strings of a read aligned to two separate haplotype referencs
+# This function takes the cigar strings of a read aligned to two separate haplotype references
 # and returns the partitioning of the read according to the two alignments
 #
 def refine_cigartuples(

@@ -1,0 +1,377 @@
+rule compare_reads_to_reference_panel:
+    input:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",            
+        reference_panel_vcf = config["files"]["reference_panel_vcf_filename"]
+    output:
+        parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "alignment_to_reference_panel.parquet",
+    threads: 16,
+    retries: 3
+    resources:
+        time_min = lambda wildcards, attempt: [60, 120, 480][attempt-1],
+        mem_mb = lambda wildcards, attempt: [32000, 64000, 128000][attempt-1],
+    run:
+        df = contamination.compare_read_to_reference_chrom(
+            input.bam,
+            input.reference_panel_vcf,
+            wildcards.chrom,
+            chunk_size = 10_000_000,
+            n_threads = threads,
+        )
+
+        df.write_parquet(output.parquet)
+
+rule find_variation_on_reads:
+    input:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",            
+    output:
+        parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "grch38_variants_on_reads.parquet",
+    threads: 16,
+    retries: 3
+    resources:
+        time_min = lambda wildcards, attempt: [60, 120, 480][attempt-1],
+        mem_mb = lambda wildcards, attempt: [32000, 64000, 128000][attempt-1],
+    run:
+        df = contamination.find_variation_on_reads_chrom(
+            input.bam,
+            wildcards.chrom,
+            chunk_size = 10_000_000,
+            n_threads = threads,
+        )
+
+        df.write_parquet(output.parquet)
+
+rule find_variation_on_chrom:
+    input:
+        parquets = [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}" / "{chrom}" \
+            / "grch38_variants_on_reads{suffix}.parquet") \
+            for R in data_rows],
+    output:
+        parquet = output_path / "alignments/{chrom}/grch38_variants_on_chrom{suffix}.parquet",
+    threads: 16,
+    retries: 3
+    resources:
+        time_min = lambda wildcards, attempt: [120, 480, 720][attempt-1],
+        mem_mb = lambda wildcards, attempt: [32000, 64000, 128000][attempt-1],
+    run:
+        all_vars_df = pl.concat([
+            pl.scan_parquet(filename) for filename in input.parquets
+        ])
+
+        all_vars_stats_df = (all_vars_df
+            .group_by("ref_start", "ref_seq")
+            .len()
+            .rename({"len": "n_times"})
+            .with_columns(chrom = pl.lit(wildcards.chrom))
+            .collect(streaming=True)
+        )
+
+        all_vars_stats_df.write_parquet(output.parquet)
+
+
+rule find_variation_on_reads_at_mid_quality_events:
+    input:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",  
+        parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}/annotated_0.95_high_confidence_snps.parquet",          
+    output:
+        parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "grch38_variants_on_reads_at_mid_quality_events.parquet",
+    threads: 16,
+    retries: 3
+    resources:
+        time_min = lambda wildcards, attempt: [60, 120, 480][attempt-1],
+        mem_mb = lambda wildcards, attempt: [32000, 64000, 128000][attempt-1],
+    run:
+        df = contamination.find_variation_on_reads_at_mid_quality_events_chrom(
+            str(input.bam),
+            str(input.parquet),
+            wildcards.chrom,
+            chunk_size = 10_000_000,
+            n_threads = threads,
+        )
+
+        df.write_parquet(output.parquet)
+
+rule compare_reads_to_sample_panel:
+    input:
+        alignment_bam_filename = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        reference_panel_parquet = output_path / "alignments/{chrom}/grch38_variants_on_chrom_at_mid_quality_events.parquet",
+    output:
+        parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "alignment_to_sample_panel.parquet",
+    threads: 16,
+    retries: 2,
+    resources:
+        time_min = lambda wildcards, attempt: [60, 720][attempt-1],
+        mem_mb = lambda wildcards, attempt: [64000, 256000][attempt-1],
+    run:
+        df = contamination.compare_reads_to_dataset_reference_chrom(
+            input.alignment_bam_filename,
+            input.reference_panel_parquet,
+            wildcards.chrom,
+            chunk_size = 10_000_000,
+            minimal_n_times = 2,
+            n_threads = threads,
+        )
+
+        df.write_parquet(output.parquet)
+
+
+
+rule count_double_mismatches_per_read:
+    input:
+        aln_parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "alignment_to_reference_panel.parquet",
+        snps_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "annotated_0.95_high_confidence_snps.parquet",
+    output:
+        parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "double_mismatches_per_read.parquet",
+    resources:
+        time_min = 60,
+        mem_mb = 128000,
+    run:
+        (pl.scan_parquet(input.aln_parquet)
+            .join(
+                pl.scan_parquet(input.snps_parquet),
+                on=["read_name", "start"],
+                how="full",
+            )
+            .group_by("read_name")
+            .agg(
+                (
+                    (pl.col("op1") == 8) & 
+                    (pl.col("op2") == 8) & 
+                    pl.col("allele_freq").is_not_null()
+                ).sum().alias("n_double_mismatches_at_panel_snps"),
+                (
+                    (pl.col("op1") == 8) & 
+                    (pl.col("op2") == 8) & 
+                    pl.col("allele_freq").is_not_null() & 
+                    pl.col("is_high_conf_event")
+                ).sum().alias("n_high_conf_double_mismatches_at_panel_snps")            
+            )
+            # .group_by("n_double_mismatches_at_panel_snps")
+            # .len()
+            # .sort("n_double_mismatches_at_panel_snps")
+            .collect()
+            .write_parquet(output.parquet)
+        )
+    
+rule count_double_mismatches_per_read_sample_panel:
+    input:
+        aln_parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "alignment_to_sample_panel.parquet",
+        snps_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "annotated_0.95_high_confidence_snps.parquet",
+    output:
+        parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "double_mismatches_per_read_sample_panel.parquet",
+    resources:
+        time_min = 60,
+        mem_mb = 32000,
+    run:
+        (pl.scan_parquet(input.aln_parquet)
+            .join(
+                pl.scan_parquet(input.snps_parquet),
+                on=["read_name", "start"],
+                how="full",
+            )
+            .group_by("read_name")
+            .agg(
+                (
+                    (pl.col("op1") == 8) & 
+                    (pl.col("op2") == 8) & 
+                    (pl.col("ref_seq").str.to_uppercase() == pl.col("refseq_start1").str.to_uppercase())
+                ).sum().alias("n_double_mismatches_at_sample_panel_snps"),
+                (
+                    (pl.col("op1") == 8) & 
+                    (pl.col("op2") == 8) & 
+                    (pl.col("ref_seq").str.to_uppercase() == pl.col("refseq_start1").str.to_uppercase()) &
+                    pl.col("is_mid_quality_event")
+                ).sum().alias("n_mid_quality_double_mismatches_at_sample_panel_snps")            
+            )
+            .collect()
+            .write_parquet(output.parquet)
+        )
+
+rule prob_contamination_detection_per_read:
+    input:
+        aln_parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "alignment_to_reference_panel.parquet",
+        snps_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "annotated_0.95_high_confidence_snps.parquet",
+    output:
+        parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "prob_contamination_detection_per_read.parquet",
+    resources:
+        time_min = 60,
+        mem_mb = 32000,
+    run:
+        (pl.scan_parquet(input.aln_parquet)
+            .join(
+                pl.scan_parquet(input.snps_parquet),
+                on=["read_name", "start"],
+                how="full",
+            )
+            .group_by("read_name")
+            .agg(
+                (            
+                    (1-pl.col("allele_freq")).log(base=2) * pl.col("op1").is_null()
+                ).sum().alias("log2_prob_panel_snps_not_in_read"),
+                (
+                    pl.col("op1").is_null() & 
+                    pl.col("allele_freq").is_not_null()
+                ).sum().alias("n_panel_snps_not_in_read"),
+                (
+                    pl.col("op1").is_null() & 
+                    pl.col("allele_freq").is_not_null() &
+                    (pl.col("allele_freq") > 0.1)
+                ).sum().alias("n_AF>0.1_panel_snps_not_in_read"),
+            )
+            .collect()
+            .write_parquet(output.parquet)
+        )
+        
+rule filter_high_conf_events_at_sample_panel:
+    input:
+        aln_parquet = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "alignment_to_sample_panel.parquet",
+        snps_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "annotated_0.95_high_confidence_snps.parquet",
+    output:
+        parquet = output_path / "read_analysis/{sample_set}/{sample_id}/{flow_cell}/{chrom}" \
+            / "high_confidence_alignment_to_sample_panel.parquet",
+    resources:
+        time_min = 60,
+        mem_mb = 32000,
+    run:
+        (pl.scan_parquet(input.aln_parquet)
+            .join(
+                pl.scan_parquet(input.snps_parquet),
+                on=["read_name", "start"],
+                how="full",
+            )
+            .filter(
+                (
+                    (pl.col("op1") == 8) & 
+                    (pl.col("op2") == 8) & 
+                    (pl.col("ref_seq").str.to_uppercase() == pl.col("refseq_start1").str.to_uppercase()) &
+                    pl.col("is_high_conf_event")
+                ) |
+                (
+                    pl.col("is_high_conf_snp")
+                )
+            )
+            .collect()
+            .write_parquet(output.parquet)
+        )        
+
+rule compare_reads_to_reference_panel_final:
+    input:
+        # A = [str(output_path / f"read_analysis/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{chrom}" \
+        #     / "double_mismatches_per_read.parquet") \
+        #     for chrom in aut_chrom_names \
+        #         for R in data_rows],
+        # X = [str(output_path / f"read_analysis/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{chrom}" \
+        #     / "high_confidence_alignment_to_sample_panel.parquet") \
+        #     for chrom in aut_chrom_names \
+        #         for R in data_rows],
+        D = [str(output_path / f"read_analysis/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{chrom}" \
+            / "double_mismatches_per_read_sample_panel.parquet") \
+            for chrom in aut_chrom_names \
+                for R in data_rows],                
+        V = [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{chrom}" \
+            / "grch38_variants_on_reads_at_mid_quality_events.parquet") \
+            for chrom in aut_chrom_names \
+                for R in data_rows],
+        # W = [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{chrom}" \
+        #     / "alignment_to_sample_panel.parquet") \
+        #     for chrom in aut_chrom_names \
+        #         for R in data_rows],
+        S = [str(output_path / f"alignments/{chrom}/grch38_variants_on_chrom_at_mid_quality_events.parquet")
+            for chrom in aut_chrom_names \
+            ],
+        # B = [str(output_path / f"read_analysis/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{chrom}" \
+        #     / "prob_contamination_detection_per_read.parquet") \
+        #     for chrom in aut_chrom_names \
+        #         for R in data_rows] 
+
+
+# ---------------------------------------------------------------------------------------------------
+# DeepVariant
+#
+
+# rule merge_all_minimap2_to_grch38_per_chrom:
+#     input:
+#         bams = lambda wc: [str(output_path / "alignments/{sample_set}/{sample_id}" / f"{R.flow_cell}/grch38_reference/" \
+#             / "minimap2.sorted.primary_alignments.bam") \
+#             for R in data_rows if R.sample_set == wc.sample_set and R.sample_id == wc.sample_id],
+#         bais = lambda wc: [str(output_path / "alignments/{sample_set}/{sample_id}" / f"{R.flow_cell}/grch38_reference/" \
+#             / "minimap2.sorted.primary_alignments.bam.bai") \
+#             for R in data_rows if R.sample_set == wc.sample_set and R.sample_id == wc.sample_id],
+#     output:
+#         bam = output_path / "alignments/{sample_set}/{sample_id}/{chrom}/grch38_reference/" \
+#             / "minimap2.sorted.primary_alignments.merged.bam",
+#         bai = output_path / "alignments/{sample_set}/{sample_id}/{chrom}/grch38_reference/" \
+#             / "minimap2.sorted.primary_alignments.merged.bam.bai",
+#     threads: 16
+#     retries: 3
+#     resources:
+#         time_min = lambda wildcards, attempt: attempt * 60,
+#         mem_mb = lambda wildcards, attempt: attempt * 32000,
+#     run:
+#         shell(
+#             "{samtools_path} merge -@ {threads} -o {output.bam} -R {wildcards.chrom} {input.bams}"
+#         )
+#         shell(
+#             "{samtools_path} index -@ {threads} {output.bam}"
+#         )
+
+# deepvariant_command = "/software/singularity/3.11.4/bin/singularity exec -B /lustre /lustre/scratch126/casm/team154pc/sl17/01.himut/02.results/02.germline_mutations/deepvariant.simg"
+# rule run_deepvariant:
+#     input:
+#         bam = output_path / "alignments/{sample_set}/{sample_id}/{chrom}/grch38_reference/" \
+#             / "minimap2.sorted.primary_alignments.merged.bam",
+#         bai = output_path / "alignments/{sample_set}/{sample_id}/{chrom}/grch38_reference/" \
+#             / "minimap2.sorted.primary_alignments.merged.bam.bai",
+#         grch38_reference = config["files"]["grch38_reference_path"],
+#     output:
+#         vcf = output_path / "alignments/{sample_set}/{sample_id}/{chrom}/grch38_reference/" \
+#             / "deepvariant.vcf.gz",
+#         vcf_index = output_path / "alignments/{sample_set}/{sample_id}/{chrom}/grch38_reference/" \
+#             / "deepvariant.vcf.gz.tbi",
+#     threads: 16,
+#     resources:
+#         time_min = 240,
+#         mem_mb = 128000,
+#     shell:
+#         (
+#             "ulimit -u 10000 && "
+#             "{deepvariant_command} /opt/deepvariant/bin/run_deepvariant "
+#             "--model_type PACBIO "
+#             "--ref {input.grch38_reference} "
+#             "--reads {input.bam} "
+#             "--output_vcf {output.vcf} "
+#             "--num_shards {threads} "
+#             "--regions {wildcards.chrom} "
+#         )
+
+# rule deepvariant_final:
+#     input:
+#         [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{chrom}/grch38_reference/" \
+#         #    / "minimap2.sorted.primary_alignments.merged.bam") \
+#             / "deepvariant.vcf.gz")
+#             for R in data_rows
+#             for chrom in aut_chrom_names],

@@ -9,7 +9,7 @@ import re
 import pysam
 import glob
 
-from src import liftover, annotate, diagnostics, dashboard, inference, IDs
+from src import liftover, annotate, diagnostics, dashboard, inference, IDs, contamination
 
 # ---------------------------------------------------------------------------------
 # Chrom lists
@@ -56,7 +56,7 @@ flow_cell_to_type = {R.flow_cell:R.flow_cell_type for R in data_rows}
 
 flow_cell_to_params = {}
 for R in data_rows:
-    flow_cell_to_params[R.flow_cell] = config["qc_parameters"]
+    flow_cell_to_params[R.flow_cell] = config["qc_parameters"].copy()
     flow_cell_to_params[R.flow_cell].update(config["flow_cell_types"][R.flow_cell_type])
 
 # Parse assemblies if exist
@@ -74,6 +74,7 @@ else:
 include: "snakefiles_new/read_analysis.snk"
 include: "snakefiles_new/tandem_repeats.snk"
 include: "snakefiles_new/tract_length.snk"
+include: "snakefiles_new/contamination.snk"
 # include: "snakefiles_new/inference.snk"
 # include: "snakefiles_new/prdm9.snk"
 
@@ -173,18 +174,17 @@ rule scaffold_haplotypes:
         query_fasta = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta",
         query_fasta_fai = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai",
         reference_fasta = config["files"]["t2t_reference_path"],
-    params:
+    output:
         agp = temp(output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.agp"),
         fasta = temp(output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.fasta"),
         expanded_fasta = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta",
-    output:
         expanded_fai = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.fai",
     threads: 16
     resources:
         mem_mb=50000,
     run:
         # To infer gaps: " -r -g 2 -m 100000000 "
-        output_directory = Path(params.fasta).parent
+        output_directory = Path(output.fasta).parent
         shell(
             "{ragtag_path} scaffold {input.reference_fasta} {input.query_fasta}"
             " -o {output_directory} "
@@ -192,14 +192,14 @@ rule scaffold_haplotypes:
             " --aligner {minimap2_path} "
             " -t {threads} "
         )
-        with open(params.fasta, 'r') as infile:
-            with open(params.expanded_fasta, 'w') as outfile:
+        with open(output.fasta, 'r') as infile:
+            with open(output.expanded_fasta, 'w') as outfile:
                 # Replace every occurrence of 100-30000 Ns (gap inserted by RagTag) or more by 30,000 exactly.
                 # This avoid read spanning consecutive contigs, but does not explode the expanded sequence.
                 outfile.write(re.sub(r'N{100,30000}', 'N'*30000, infile.read()))
 
         shell(
-            "{samtools_path} faidx {params.expanded_fasta}"
+            "{samtools_path} faidx {output.expanded_fasta}"
         )
 
 rule scaffold_haplotypes_final:
