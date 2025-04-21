@@ -400,8 +400,11 @@ def simulate_read_patterns_probs(
     GC_tract_types = (np.random.random(n_events) < m).astype(np.int64)
     n_first_GC = np.sum(GC_tract_types[event_types == 0] == 1)
     GC_tract_lengths = np.zeros(n_events, dtype=np.int64)
+    
+    first_switches = np.zeros(n_events, dtype=np.int64)
+    second_switches = np.zeros(n_events, dtype=np.int64)
         
-    print(f"Working on {n_events} events")
+    #print(f"Working on {n_events} events")
     for i in range(n_events):
         event_idx = event_indices[i]
         idx_transitions = [np.int64(x) for x in range(0)]  # weird hack for numba to recognize type
@@ -433,6 +436,8 @@ def simulate_read_patterns_probs(
         else:
             switch = np.random.randint(snp_positions_on_read[j-2], snp_positions_on_read[j-1])      
 
+        first_switches[i] = switch
+
         if event_types[i]:
             # Only switch
             if not (switch <= snp_positions_on_read[0] or switch > snp_positions_on_read[-1]): 
@@ -453,6 +458,8 @@ def simulate_read_patterns_probs(
             GC_tract_lengths[i] = tract_length
 
             switch = switch + tract_length
+            second_switches[i] = switch
+
             if not (switch <= snp_positions_on_read[0] or switch > snp_positions_on_read[-1]): 
                 idx_transitions.append(np.searchsorted(snp_positions_on_read, switch) - 1)
 
@@ -472,7 +479,7 @@ def simulate_read_patterns_probs(
         # Add it
         res.append(idx_transitions)
 
-    return res, event_indices, n_noevents, n_CO, n_GC, n_first_GC, event_types, GC_tract_types, GC_tract_lengths
+    return res, event_indices, n_noevents, n_CO, n_GC, n_first_GC, event_types, GC_tract_types, GC_tract_lengths, first_switches, second_switches
 
 # def simulate_read_patterns_probs(
 #     read_length_list,
@@ -958,6 +965,149 @@ def likelihood_of_read_one_direction(
     #print(L0No, L0CO, L0NCO_left, L0NCO_right, L0NCO_between, L0NCO_all)
     return L2 + L1 + L0
 
+
+@numba.jit
+def likelihood_of_read_one_direction_meiotic_mitotic(
+    read_length,
+    snp_positions_on_read,
+    idx_transitions,
+    prob_CO_between_snps_meiotic,
+    prob_CO_before_read_meiotic,
+    prob_CO_after_read_meiotic,
+    prob_NCO_between_snps_mitotic,
+    prob_NCO_before_read_mitotic,
+    prob_NCO_after_read_mitotic,
+    q,
+    m,
+    GC_tract_mean,
+    GC_tract_mean2,
+    read_margin_in_bp = 5000,
+):
+    lmb1 = 1.0 / GC_tract_mean
+    lmb2 = 1.0 / GC_tract_mean2
+    n_transitions = len(idx_transitions)
+    n_snps = len(snp_positions_on_read)
+    R = read_margin_in_bp
+    L = read_length
+
+    fraction_meoitic_NCO = 1
+
+    rs = prob_CO_between_snps_meiotic
+    nrs = prob_NCO_between_snps_mitotic
+    assert len(rs) == n_snps+1
+    assert len(nrs) == n_snps+1
+
+    ps = snp_positions_on_read
+    
+    # Two switches
+    if n_transitions == 2:
+        # idx_transition is 0-based, but i,j, rs are 1-based
+        i0 = idx_transitions[0]
+        j0 = idx_transitions[1]
+        i1 = i0 + 1
+        
+        ri = rs[i1]
+        nri = nrs[i1]
+        pi_diff = ps[i0+1] - ps[i0]    # ps are 0=based
+
+        L2 = (
+            ri * (1-q) * fraction_meoitic_NCO / (pi_diff * q)  * f2(m, lmb1, lmb2, ps[i0], ps[i0+1], ps[j0], ps[j0+1]) +
+            nri / pi_diff             * f2(m, lmb1, lmb2, ps[i0], ps[i0+1], ps[j0], ps[j0+1])
+        )
+
+    # One switch
+    elif n_transitions == 1:
+        # idx_transition is 0-based, but i, rs are 1-based
+        i0 = idx_transitions[0]
+        i1 = i0 + 1
+
+        ri = rs[i1]
+        nri = nrs[i1]
+
+        r0 = rs[0]
+        nr0 = nrs[0]
+
+        p1 = ps[0]
+        pn = ps[-1]
+        pi_diff = ps[i0+1] - ps[i0]    
+
+        rm1 = prob_CO_before_read_meiotic
+        nrm1 = prob_NCO_before_read_mitotic
+        
+        L1CO = ri
+        L1NCO_left = (
+            (r0 * (1-q) * fraction_meoitic_NCO) / (p1*q) * f2(m, lmb1, lmb2, 0, p1, ps[i0], ps[i0+1]) + 
+            (rm1 * (1-q) * fraction_meoitic_NCO) / (R * q) * f2(m, lmb1, lmb2, -R, 0, ps[i0], ps[i0+1]) +
+            (nr0 / p1) * f2(m, lmb1, lmb2, 0, p1, ps[i0], ps[i0+1]) + 
+            (nrm1 / R) * f2(m, lmb1, lmb2, -R, 0, ps[i0], ps[i0+1])
+        )
+        L1NCO_right = (
+            (ri * (1-q * fraction_meoitic_NCO)) / (pi_diff * q) * f4(m, lmb1, lmb2, ps[i0], ps[i0+1], pn) +
+            (nri / pi_diff) * f4(m, lmb1, lmb2, ps[i0], ps[i0+1], pn)
+        )
+        
+        L1 = L1CO + L1NCO_left + L1NCO_right
+            
+
+    # No switches
+    elif n_transitions == 0:
+        L0No = (1
+            - (prob_CO_before_read_meiotic + rs.sum() + prob_CO_after_read_meiotic) / q
+            - (prob_NCO_before_read_mitotic + nrs.sum() + prob_NCO_after_read_mitotic)
+        )
+        assert (0 <= L0No <= 1)
+
+        L0CO = prob_CO_before_read_meiotic + rs[0] + rs[-1] + prob_CO_after_read_meiotic
+
+        rm1 = prob_CO_before_read_meiotic
+        nrm1 = prob_NCO_before_read_mitotic
+
+        r0 = rs[0]
+        nr0 = nrs[0]
+
+        p1 = ps[0]
+        pn = ps[-1]
+
+        rn = rs[-1]
+        nrn = nrs[-1]
+
+        rp1 = prob_CO_after_read_meiotic
+        nrp1 = prob_NCO_after_read_mitotic
+
+        L0NCO_left = (
+            (rm1 * (1-q) * fraction_meoitic_NCO) / (R * q) * (f6(m, lmb1, lmb2, -R, 0) + f2(m, lmb1, lmb2, -R, 0, 0, p1)) + 
+            (r0 * (1-q) * fraction_meoitic_NCO) / (p1 * q) * f6(m, lmb1, lmb2, 0, p1) +
+            (nrm1 / R) * (f6(m, lmb1, lmb2, -R, 0) + f2(m, lmb1, lmb2, -R, 0, 0, p1)) + 
+            (nr0 / p1) * f6(m, lmb1, lmb2, 0, p1)
+        )
+
+        L0NCO_right = (
+            (rn * (1-q) * fraction_meoitic_NCO) / ((L - pn) * q) * (f6(m, lmb1, lmb2, pn, L) + f4(m, lmb1, lmb2, pn, L, L)) +
+            (rp1 * (1-q) * fraction_meoitic_NCO) / (R * q) * (f6(m, lmb1, lmb2, L, L + R) + f4(m, lmb1, lmb2, L, L+R, L+R)) +
+            (nrn / (L - pn)) * (f6(m, lmb1, lmb2, pn, L) + f4(m, lmb1, lmb2, pn, L, L)) +
+            (nrp1 / R) * (f6(m, lmb1, lmb2, L, L + R) + f4(m, lmb1, lmb2, L, L+R, L+R))
+        )
+
+        L0NCO_between = 0
+        for n_snp in range(n_snps-1):
+            L0NCO_between += (rs[n_snp+1] * (1-q) * fraction_meoitic_NCO) / ((ps[n_snp+1] - ps[n_snp]) * q) * f6(m, lmb1, lmb2, ps[n_snp], ps[n_snp+1])
+            L0NCO_between += (nrs[n_snp+1] / (ps[n_snp+1] - ps[n_snp])) * f6(m, lmb1, lmb2, ps[n_snp], ps[n_snp+1])
+
+        L0NCO_all = (
+            (rm1 * (1-q) * fraction_meoitic_NCO) / (R * q) * f4(m, lmb1, lmb2, -R, 0, pn) + 
+            (r0 * (1-q) * fraction_meoitic_NCO) / (p1 * q) * f4(m, lmb1, lmb2, 0, p1, pn) +
+            (nrm1 / R) * f4(m, lmb1, lmb2, -R, 0, pn) + 
+            (nr0  / p1) * f4(m, lmb1, lmb2, 0, p1, pn)
+        )
+
+        L0 = L0No + L0CO + L0NCO_left + L0NCO_right + L0NCO_between + L0NCO_all
+
+    else:
+        assert("Too many switches")
+
+    #print(L0No, L0CO, L0NCO_left, L0NCO_right, L0NCO_between, L0NCO_all)
+    return L2 + L1 + L0
+
 @numba.jit
 def likelihood_of_read(
     read_length,
@@ -1289,6 +1439,224 @@ def maximum_likelihood_all_reads_joint(
         method = "Nelder-Mead",
         bounds = [q_range_sperm, q_range_blood, m_range_sperm, m_range_blood, 
                   GC_tract_mean_range, GC_tract_mean2_range, prob_factor_range_sperm, prob_factor_range_blood],
+        options={'xatol': 1e-2, "maxiter": 1000000, "maxfev": 1000000},
+    )
+
+    return res
+
+
+# ------------------------------------------------------------------------------------------------
+#
+# Optimize joint model for meiotic and mitotic components in sperm
+#
+
+@numba.jit
+def likelihood_of_read_meiotic_mitotic(
+    read_length,
+    snp_positions_on_read,
+    idx_transitions,
+    prob_CO_between_snps_meiotic,
+    prob_CO_before_read_meiotic,
+    prob_CO_after_read_meiotic,
+    prob_NCO_between_snps_mitotic,
+    prob_NCO_before_read_mitotic,
+    prob_NCO_after_read_mitotic,
+    q_meiotic,
+    #q_mitotic,
+    m_meiotic,
+    GC_tract_mean_meiotic,
+    GC_tract_mean2_meiotic,
+    #GC_tract_mean_mitotic,
+    prob_factor_mitotic,
+    read_margin_in_bp = 5000,
+):
+    #
+    # Forward direction
+    #
+
+    # Forward
+    L_forward = likelihood_of_read_one_direction_meiotic_mitotic(
+        read_length,
+        snp_positions_on_read,
+        idx_transitions,
+        prob_CO_between_snps_meiotic,
+        prob_CO_before_read_meiotic,
+        prob_CO_after_read_meiotic,
+        prob_NCO_between_snps_mitotic * prob_factor_mitotic,
+        prob_NCO_before_read_mitotic * prob_factor_mitotic,
+        prob_NCO_after_read_mitotic * prob_factor_mitotic,
+        q_meiotic,
+        m_meiotic,
+        GC_tract_mean_meiotic,
+        GC_tract_mean2_meiotic,
+        read_margin_in_bp,
+    )
+
+    #
+    # Backward direction
+    #
+
+    L_backward = likelihood_of_read_one_direction_meiotic_mitotic(
+        read_length,
+        read_length - snp_positions_on_read[::-1],
+        len(snp_positions_on_read) - 2 - idx_transitions[::-1],
+        prob_CO_between_snps_meiotic[::-1],
+        prob_CO_after_read_meiotic,
+        prob_CO_before_read_meiotic,
+        prob_NCO_between_snps_mitotic[::-1] * prob_factor_mitotic,
+        prob_NCO_after_read_mitotic * prob_factor_mitotic,
+        prob_NCO_before_read_mitotic * prob_factor_mitotic,
+        q_meiotic,
+        m_meiotic,
+        GC_tract_mean_meiotic,
+        GC_tract_mean2_meiotic,
+        read_margin_in_bp,
+    )
+
+    return (L_forward + L_backward) / 2 
+
+@numba.jit(parallel=True)
+def log_likelihood_of_many_reads_meiotic_mitotic(
+    read_length_list,
+    snp_positions_on_read_list,
+    idx_transitions_list,
+    prob_CO_between_snps_list_meiotic,
+    prob_CO_before_read_list_meiotic,
+    prob_CO_after_read_list_meiotic,
+    prob_NCO_between_snps_list_mitotic,
+    prob_NCO_before_read_list_mitotic,
+    prob_NCO_after_read_list_mitotic,
+    weights_list,
+    q_meiotic,
+    #q_mitotic,
+    m_meiotic,
+    GC_tract_mean_meiotic,
+    GC_tract_mean2_meiotic,
+    #GC_tract_mean_mitotic,
+    prob_factor_mitotic,
+    read_margin_in_bp,
+):
+    S = 0.0
+    for i in numba.prange(len(read_length_list)):
+        S += weights_list[i] * \
+            np.log(
+                likelihood_of_read_meiotic_mitotic(
+                    read_length_list[i],
+                    snp_positions_on_read_list[i],
+                    idx_transitions_list[i],
+                    prob_CO_between_snps_list_meiotic[i],
+                    prob_CO_before_read_list_meiotic[i],
+                    prob_CO_after_read_list_meiotic[i],
+                    prob_NCO_between_snps_list_mitotic[i],
+                    prob_NCO_before_read_list_mitotic[i],
+                    prob_NCO_after_read_list_mitotic[i],
+                    q_meiotic,
+                    #q_mitotic,
+                    m_meiotic,
+                    GC_tract_mean_meiotic,
+                    GC_tract_mean2_meiotic,
+                    #GC_tract_mean_mitotic,
+                    prob_factor_mitotic,
+                    read_margin_in_bp,
+                )
+            )
+    return S
+
+
+def maximum_likelihood_all_reads_meiotic_mitotic(
+    read_length_list_sperm,
+    snp_positions_on_read_list_sperm,
+    idx_transitions_list_sperm,
+    prob_CO_between_snps_list_meiotic,
+    prob_CO_before_read_list_meiotic,
+    prob_CO_after_read_list_meiotic,
+    prob_NCO_between_snps_list_mitotic,
+    prob_NCO_before_read_list_mitotic,
+    prob_NCO_after_read_list_mitotic,
+    weights_list_sperm,
+    q_range_meiotic,
+#    q_range_mitotic,
+    m_range_meiotic,
+    GC_tract_mean_meiotic_range,
+    GC_tract_mean2_meoitic_range,
+#    GC_tract_mean_mitotic_range,
+    prob_factor_range_mitotic,
+    read_margin_in_bp = 5000,
+    x0 = None,
+):
+    # Assert all ranges are valid
+    assert q_range_meiotic[0] > 0 and q_range_meiotic[1] < 1 and q_range_meiotic[0] <= q_range_meiotic[1]
+#    assert q_range_mitotic[0] > 0 and q_range_mitotic[1] < 1 and q_range_mitotic[0] <= q_range_mitotic[1]
+    assert m_range_meiotic[0] >= 0 and m_range_meiotic[1] <= 1 and m_range_meiotic[0] <= m_range_meiotic[1]
+    assert prob_factor_range_mitotic[0] > 0 and prob_factor_range_mitotic[1] <= 1 and prob_factor_range_mitotic[0] <= prob_factor_range_mitotic[1]
+    assert GC_tract_mean_meiotic_range[0] >= 1
+    assert GC_tract_mean2_meoitic_range[0] >= 1
+    #assert GC_tract_mean_mitotic_range[0] >= 1
+    
+    read_length_list_sperm = numba.typed.List(read_length_list_sperm)
+    snp_positions_on_read_list_sperm = numba.typed.List(snp_positions_on_read_list_sperm)
+    idx_transitions_list_sperm = numba.typed.List([np.array(x).astype(np.int32) for x in idx_transitions_list_sperm]) 
+    prob_CO_between_snps_list_meiotic = numba.typed.List(prob_CO_between_snps_list_meiotic)
+    prob_CO_before_read_list_meiotic = numba.typed.List(prob_CO_before_read_list_meiotic)
+    prob_CO_after_read_list_meiotic = numba.typed.List(prob_CO_after_read_list_meiotic)
+    prob_NCO_between_snps_list_mitotic = numba.typed.List(prob_NCO_between_snps_list_mitotic)
+    prob_NCO_before_read_list_mitotic = numba.typed.List(prob_NCO_before_read_list_mitotic)
+    prob_NCO_after_read_list_mitotic = numba.typed.List(prob_NCO_after_read_list_mitotic)
+    weights_list_sperm = numba.typed.List(weights_list_sperm)
+
+    if x0 is None:
+        # Initialize by the means of ranges
+        x0 = [            
+            np.mean(q_range_meiotic), 
+#            np.mean(q_range_mitotic),
+            np.mean(m_range_meiotic),
+            np.mean(GC_tract_mean_meiotic_range),
+            np.mean(GC_tract_mean2_meoitic_range),
+            #np.mean(GC_tract_mean_mitotic_range),
+            np.mean(prob_factor_range_mitotic),
+        ]
+
+    def minimizeme(x):        
+        with np.printoptions(precision=3, suppress=True):
+            print(f"Current:\t{x}\t", end="")   
+            res = -log_likelihood_of_many_reads_meiotic_mitotic(
+                read_length_list_sperm,
+                snp_positions_on_read_list_sperm,
+                idx_transitions_list_sperm,
+                prob_CO_between_snps_list_meiotic,
+                prob_CO_before_read_list_meiotic,
+                prob_CO_after_read_list_meiotic,
+                prob_NCO_between_snps_list_mitotic,
+                prob_NCO_before_read_list_mitotic,
+                prob_NCO_after_read_list_mitotic,
+                weights_list_sperm,
+                q_meiotic = x[0],
+                #q_mitotic = x[1],
+                m_meiotic = x[1],
+                GC_tract_mean_meiotic = x[2],
+                GC_tract_mean2_meiotic = x[3],
+                #GC_tract_mean_mitotic = x[5],
+                prob_factor_mitotic = x[4],
+                read_margin_in_bp = read_margin_in_bp,
+            )
+            
+            print(f"{res}")   
+            return res     
+    
+    
+    res = scipy.optimize.minimize(
+        fun = minimizeme,
+        x0 = x0,
+        method = "Nelder-Mead",
+        bounds = [
+            q_range_meiotic,
+#            q_range_mitotic,
+            m_range_meiotic,
+            GC_tract_mean_meiotic_range,
+            GC_tract_mean2_meoitic_range,
+#            GC_tract_mean_mitotic_range,
+            prob_factor_range_mitotic,
+        ],
         options={'xatol': 1e-2, "maxiter": 1000000, "maxfev": 1000000},
     )
 
@@ -1842,6 +2210,7 @@ def plot_boxplots_samples(
     label_to_color = None,
     ax = None,
     show_labels = True,
+    default_color = "#f7f7f7",
 ):
 
     if ax is None:
@@ -1884,7 +2253,7 @@ def plot_boxplots_samples(
             color_palette.append(
                 label_to_color.get(
                     IDs.sample_id_to_paper_label[sample_id], 
-                    "#f7f7f7"
+                    default_color,
                 )
             )
 
@@ -2041,6 +2410,7 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
     # 1. Take all reads with any switches
     #
     # - High quality read (same strand, MAPQ, mismatches and clipping)
+    # - No contamination
     # - Has enough coverage on both haplotypes
     # - Mapped to nonzero cM
     # - Has more than min SNPs
@@ -2051,8 +2421,11 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
     cand_df = (reads_df
         .filter(pl.col("sample_id").is_in(focal_sample_ids))
         .filter("is_high_quality_read")
+        .filter(~pl.col("is_contamination"))
         .filter((pl.col("min_coverage_hap1") >= 3) & (pl.col("min_coverage_hap2") >= 3))
         .filter(pl.col("full_read_crossover_prob") > 0)
+        .filter((pl.col("before_read_cM") > 0) & (pl.col("after_read_cM") > 0))
+        .filter(pl.col("between_high_quality_snps_cM").list.min() > 0)
         .filter(pl.col("high_quality_snp_positions").list.len() >= min_snps)
         .filter(pl.col("high_quality_classification"))
         .filter(pl.col("high_quality_classification_class") != "CNCO")
@@ -2094,6 +2467,8 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
         .filter("is_high_quality_read")
         .filter((pl.col("min_coverage_hap1") >= 3) & (pl.col("min_coverage_hap2") >= 3))
         .filter(pl.col("full_read_crossover_prob") > 0)
+        .filter((pl.col("before_read_cM") > 0) & (pl.col("after_read_cM") > 0))
+        .filter(pl.col("between_high_quality_snps_cM").list.min() > 0)        
         .filter(pl.col("high_quality_snp_positions").list.len() >= min_snps)
         .filter(pl.col("idx_transitions").is_null())
         .gather_every(take_every)
@@ -2129,19 +2504,20 @@ def generate_call_set(reads_df, focal_sample_ids, take_every=1, bootstrap=False,
         callset_df = callset_df.gather_every(sample_every)
     
     # Add between SNPs in bp
-    callset_df = (callset_df                  
-        .with_columns(
-            pl.lit([]).list.concat([
-                pl.lit(0),
-                pl.col("high_quality_snp_positions"),
-                pl.col("read_length"),
-            ]).list.diff(null_behavior="drop").alias("between_high_quality_snps_bp")
+    if len(callset_df):
+        callset_df = (callset_df                  
+            .with_columns(
+                pl.lit([]).list.concat([
+                    pl.lit(0),
+                    pl.col("high_quality_snp_positions"),
+                    pl.col("read_length"),
+                ]).list.diff(null_behavior="drop").alias("between_high_quality_snps_bp")
+            )
         )
-    )
-    
-    # Bootstrap if needed
-    if bootstrap:
-        callset_df = callset_df.sample(n = len(callset_df), with_replacement = True)
+        
+        # Bootstrap if needed
+        if bootstrap:
+            callset_df = callset_df.sample(n = len(callset_df), with_replacement = True)
     
     return callset_df
     

@@ -106,7 +106,7 @@ ceph_sample_ids = [
     "200085",
     "200086",
     "200087",
-    # "200100", -- different fasta format, deal later
+    "200100", 
     "200101",
     "200102",
     "200104",
@@ -578,3 +578,81 @@ control_NCO_read_blacklist_PD48473b = [
 control_complex_read_blacklist_PD48473b = [
     "m64089_201025_015448/89065600/ccs",
 ]
+
+# From manual inspection 16.3.2025
+CEPH_NCO_read_blacklist = [
+    "m54329U_230416_101505/119931990/ccs", # should be complex
+    "m64076_230327_174311/72812222/ccs", 
+    "m54329U_230413_155849/25362962/ccs", # should be complex
+    "m84046_230522_231536_s1/231868995/ccs", # should be complex
+]
+
+# From manual inspection 17.3.2025
+TwinsUK_multisnp_NCO_read_blacklist = [
+    "m84047_240928_151025_s3/144706129/ccs", # should be complex
+    "m84047_240928_151025_s3/205264647/ccs", # should be complex or contamination
+    "m84098_241009_111452_s3/16387801/ccs", # should be complex
+    "m84047_240927_152506_s4/177670923/ccs", # should be complex
+    "m64178e_220826_023135/58721691/ccs", # should be complex
+]
+
+SL_multisnp_NCO_read_blacklist = [
+    "m84053_230908_185731_s4/144312280/ccs", # should be complex
+]
+
+# From manual inspection 24.3.2025
+CEPH_CO_read_blacklist = [
+    # 200100
+    "m84039_230317_185953_s3/262970/ccs",
+    "m84039_230317_185953_s3/41880710/ccs",
+    "m84039_230317_185953_s3/56822315/ccs",
+    "m84039_230317_185953_s3/42734774/ccs",
+    "m84039_230317_185953_s3/106631179/ccs",
+    "m84039_230317_185953_s3/60823045/ccs",
+    "m84039_230317_185953_s3/183700310/ccs",
+    "m84039_230317_185953_s3/74584756/ccs",
+    # 200101
+    "m84039_230403_233415_s1/25105730/ccs",
+    # 200102
+    "m84039_230404_000434_s2/105057495/ccs",
+    "m84039_230404_000434_s2/19993407/ccs",
+    "m84039_230401_024513_s2/220926149/ccs",
+    # 200104
+    "m84039_230317_200114_s1/46858691/ccs",
+    "m84039_230317_200114_s1/16192075/ccs",
+    "m84039_230317_200114_s1/44567258/ccs",
+    # 200106
+    "m84039_230320_213709_s3/15008699/ccs",
+    "m84039_230320_213709_s3/146015864/ccs",
+    # NA12882
+    "m84039_230304_020711_s3/53874227/ccs",
+    "m84046_230515_211624_s3/59248146/ccs",
+    "m84039_230304_020711_s3/107286399/ccs",
+    "m84039_230304_020711_s3/91624765/ccs",
+    # NA12890
+    "m54329U_230416_101505/29032974/ccs",
+    "m54329U_230413_155849/64751999/ccs",
+    "m54329U_230413_155849/169609063/ccs",
+    "m54329U_230415_010656/22154065/ccs",
+]
+
+CEPH_complex_read_blacklist = [
+    # NA12878
+    "m54329U_230327_190242/159188711/ccs",
+]
+
+
+all_read_blacklists = (
+    NCO_read_blacklist + 
+    control_CO_read_blacklist_PD47269d +
+    control_ambiguous_read_blacklist_PD47269d +
+    control_CO_read_blacklist_PD48473b +
+    control_ambiguous_read_blacklist_PD48473b +
+    control_NCO_read_blacklist_PD48473b +
+    control_complex_read_blacklist_PD48473b +
+    CEPH_NCO_read_blacklist +
+    TwinsUK_multisnp_NCO_read_blacklist +
+    SL_multisnp_NCO_read_blacklist + 
+    CEPH_CO_read_blacklist + 
+    CEPH_complex_read_blacklist
+)

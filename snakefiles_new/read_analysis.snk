@@ -599,7 +599,7 @@ rule classify_reads:
         extra_filtering = \
             (pl.col("total_mismatches") <= P["total_mismatches_max"]) & \
             (pl.col("total_clipping") <= P["total_clipping_max"]) & \
-            (~pl.col("read_name").is_in(IDs.NCO_read_blacklist))
+            (~pl.col("read_name").is_in(IDs.all_read_blacklists))
             
         res_df = diagnostics.classify_all_reads(
             pl.read_parquet(input.events_parquets),
@@ -674,7 +674,7 @@ rule annotate_all_reads_structure:
     output:
         all_parquet = output_path / "read_analysis/{sample_set}/{sample_id}/reads/{chrom}/all_reads_structure_annotated.parquet",
     resources:
-        time_min = 100,
+        time_min = 240,
         mem_mb = 64000,
     run:
         P = config["qc_parameters"]
