@@ -26,6 +26,41 @@ rule run_trf_final:
             for chrom in aut_chrom_names
             for haplotype in [1,2]]
 
+
+# On a reference genome
+rule run_trf_t2t:
+    input:
+        fasta = config["files"]["t2t_reference_path"],
+    output:
+        dat = output_path / "global" / "t2t" / "{chrom}.{start}.fasta.trf.dat",
+    resources:
+        mem_mb=8000,
+    run:
+        # Extract single fasta sequence and run TRF
+        # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
+        # Note '-l 10' - supports <10Mbp TR arrays, likely to be enough for T2T (centromeres)
+        win_len = min(10000000, liftover.T2T_chromosome_sizes_in_bp[wildcards.chrom] - int(wildcards.start))
+        shell(
+            'awk -v seq="{wildcards.chrom}" -v start={wildcards.start} -v len={win_len} -v RS=">" \''
+            '$1 == seq {{'
+            '    header = ">" seq "_" start "_" (start+len);'
+            '    gsub("\\n", "", $0); sub("^[^\\n]+\\n", "", $0);'
+            '    seqsub = substr($0, start+1, len);'
+            '    print header;'
+            '    for (i = 1; i <= length(seqsub); i += 60)'
+            '        print substr(seqsub, i, 60);'
+            '}}\' {input.fasta} | '
+            '{trf_path} - 2 6 6 80 10 50 500 -ngs -h -l 10 '
+            '> {output.dat}'
+        )
+
+rule run_trf_t2t_final:
+    input:
+        dat = [str(output_path / "global" / "t2t" / f"{chrom}.{start}.fasta.trf.dat") \
+            for chrom in aut_chrom_names
+            for start in range(0, liftover.T2T_chromosome_sizes_in_bp[chrom] + 10000000, 10000000)
+        ]            
+
 # ------------------------------------------------------------------------------------------------------------------------
 # sdust (Heng Li implementation, https://github.com/lh3/sdust)
 #
@@ -40,7 +75,7 @@ rule run_sdust:
         # Extract single fasta sequence and run sdust
         # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
         shell(
-            "awk -v seq=\"{wildcards.chrom}_RagTag\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
             "{sdust_path} -w 64 -t 20 - "
             "> {output.dat}"
         )
@@ -51,4 +86,47 @@ rule run_sdust_final:
             for sample_set in sample_sets
             for chrom in aut_chrom_names
             for haplotype in [1,2]]
-      
+
+# On a reference genome
+rule run_sdust_grch38:
+    input:
+        fasta = config["files"]["grch38_reference_path"],
+    output:
+        dat = output_path / "global" / "grch38" / "{chrom}.fasta.sdust.dat",
+    resources:
+        mem_mb=4000,
+    run:
+        # Extract single fasta sequence and run sdust
+        # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
+        shell(
+            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "{sdust_path} -w 64 -t 20 - "
+            "> {output.dat}"
+        )
+
+rule run_sdust_grch38_final:
+    input:
+        dat = [str(output_path / "global" / "grch38" / f"{chrom}.fasta.sdust.dat") \
+            for chrom in aut_chrom_names
+        ]
+
+rule run_sdust_T2T:
+    input:
+        fasta = config["files"]["t2t_reference_path"],
+    output:
+        dat = output_path / "global" / "T2T" / "{chrom}.fasta.sdust.dat",
+    resources:
+        mem_mb=4000,
+    run:
+        # Extract single fasta sequence and run sdust
+        # awk taken from https://onestopdataanalysis.com/get-sequence-fasta/
+        shell(
+            "awk -v seq=\"{wildcards.chrom}\" -v RS='>' '$1 == seq {{print RS $0}}' {input.fasta} | "
+            "{sdust_path} -w 64 -t 20 - "
+            "> {output.dat}"
+        )
+rule run_sdust_T2T_final:       
+    input:
+        dat = [str(output_path / "global" / "T2T" / f"{chrom}.fasta.sdust.dat") \
+            for chrom in aut_chrom_names
+        ]
