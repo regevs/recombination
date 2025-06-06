@@ -4,7 +4,7 @@
 
 The largest unit is **sample_set** which is a set of samples from the same individual (and thus with the same genome), and that will be used together for de-novo assembly.
 
-An **assmebly** is the result of the de-novo assembly of a sample set. This could be done in the pipeline or obtained from another source.
+An **assembly** is the result of the de-novo assembly of a sample set. This could be done in the pipeline or obtained from another source.
 
 Within a sample set, there are **sample_id**-s, which in principle correspond to a single physical sample. A single sample will include one or more flow cells.
 
