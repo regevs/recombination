@@ -1,0 +1,395 @@
+from pathlib import Path
+import pandas as pd
+import polars as pl
+import numpy as np
+import os
+import subprocess
+import pickle
+import re
+import pysam
+import glob
+
+from src import liftover, annotate, diagnostics, dashboard, inference, IDs, contamination
+
+# ---------------------------------------------------------------------------------
+# Chrom lists
+
+aut_chrom_names = [f"chr{i}" for i in list(range(1, 23))]
+chrom_names = aut_chrom_names + ["chrX", "chrY"]
+
+if "chroms" in config.keys():
+    chrom_names = config["chroms"].split(",")
+    aut_chrom_names = chrom_names
+
+
+# ---------------------------------------------------------------------------------
+# Parse config
+
+# Binaries
+hifiasm_path = config["tools"]["hifiasm_path"]
+bedtools_path = config["tools"]["bedtools_path"]
+minimap2_path = config["tools"]["minimap2_path"]
+samtools_path = config["tools"]["samtools_path"]
+bcftools_path = config["tools"]["bcftools_path"]
+trf_path = config["tools"]["trf_path"]
+ragtag_path = config["tools"]["ragtag_path"]
+sdust_path = config["tools"]["sdust_path"]
+
+# Data paths
+output_path = Path(config["output_dir_path"])
+
+# Parse data table
+data_df = pd.read_csv(config["data_table_path"], sep="\s+", header=0, index_col=False, dtype=str)
+
+# Sample sets to work on
+if "sample_sets" in config.keys():
+    sample_sets = str(config["sample_sets"]).split(",")
+    data_df = data_df[data_df["sample_set"].isin(sample_sets)]
+else:
+    sample_sets = list(data_df["sample_set"].unique())
+
+# Convenience dicts and lists
+data_rows = list(data_df.itertuples())
+
+flow_cell_to_path = {R.flow_cell:R.path for R in data_rows}
+flow_cell_to_type = {R.flow_cell:R.flow_cell_type for R in data_rows}
+
+flow_cell_to_params = {}
+for R in data_rows:
+    flow_cell_to_params[R.flow_cell] = config["qc_parameters"].copy()
+    flow_cell_to_params[R.flow_cell].update(config["flow_cell_types"][R.flow_cell_type])
+
+# Parse assemblies if exist
+if "assembly_table_path" in config.keys():
+    assemblies_dict = \
+        (pd.read_csv(config["assembly_table_path"], sep="\s+", header=0, index_col=False, dtype=str)
+            .set_index("sample_set")["fasta_wildcard_path"].to_dict()
+        )
+else:
+    assemblies_dict = {}
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Import other rules
+#
+include: "snakefiles/read_analysis.snk"
+include: "snakefiles/tandem_repeats.snk"
+include: "snakefiles/tract_length.snk"
+include: "snakefiles/contamination.snk"
+# include: "snakefiles/inference.snk"
+include: "snakefiles/prdm9.snk"
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Assembly
+#
+
+rule index_fastq:
+    input:
+        fasta_gz = "{prefix_dir}/{prefix_file}.fastq.gz",
+    output:
+        fastq_gz_fxi = "{prefix_dir}/{prefix_file}.fastq.gz.fxi",
+    resources:
+        mem_mb = lambda wildcards, attempt: attempt * 8000,
+        runtime = 8 * 60,
+    run:
+        shell("rm -f {output.fastq_gz_fxi}")
+        shell("pyfastx index {output.fastq_gz}")
+
+rule index_fastq_final:
+    input:
+        [R.path + ".fxi" for R in data_rows]
+
+def get_all_fastq_gz_for_sample_set(wildcards):
+    res = []
+    for R in data_rows:
+        if R.sample_set == wildcards.sample_set:
+            res.append(R.path)
+    return res
+
+rule hifiasm_assembly:
+    input:
+        fastq_gzs = get_all_fastq_gz_for_sample_set,
+    output:
+        fasta1 = output_path / "assemblies/{sample_set}/haplotype_1.fasta",
+        fasta2 = output_path / "assemblies/{sample_set}/haplotype_2.fasta",
+    threads: 32
+    retries: 3
+    resources: 
+        mem_mb = lambda wildcards, attempt: [1000, 320000, 640000][attempt-1],
+    run:
+        # TODO: Separate this if to a low-memory 1-thread rule
+        # If does not exist but an assembly exist in the assemblies table, create a symlink
+        if wildcards.sample_set in assemblies_dict.keys():  
+            os.symlink(assemblies_dict[wildcards.sample_set].format(haplotype=1), output.fasta1)
+            os.symlink(assemblies_dict[wildcards.sample_set].format(haplotype=2), output.fasta2)
+        else:
+            # Otherwise, do the assembly            
+            gfa1_path = str(output.fasta1).replace(
+                "haplotype_1.fasta", 
+                f"{wildcards.sample_set}.asm.bp.hap1.p_ctg.gfa",
+            )
+            gfa2_path = str(output.fasta2).replace(
+                "haplotype_2.fasta", 
+                f"{wildcards.sample_set}.asm.bp.hap2.p_ctg.gfa",
+            )
+
+            prefix = gfa1_path.replace(".bp.hap1.p_ctg.gfa", "")
+            shell(
+                f"{hifiasm_path} -o {prefix} -t {threads} {input.fastq_gzs}"
+            )
+
+            # Convert to fasta
+            shell(
+                "awk '/^S/{{print \">\"$2;print $3}}' {gfa1_path} > {output.fasta1}"
+            )
+            shell("rm {gfa1_path}")
+
+            shell(
+                "awk '/^S/{{print \">\"$2;print $3}}' {gfa2_path} > {output.fasta2}"
+            )
+            shell("rm {gfa2_path}")
+
+
+rule index_fasta:
+    input:
+        fasta = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta",
+    output:
+        fasta_fai = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai",
+    run:
+        shell(
+            "{samtools_path} faidx {input.fasta}"
+        )
+
+rule hifiasm_assembly_final:    
+    input:
+        [str(output_path / f"assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai") \
+                for sample_set in sample_sets \
+                for haplotype in [1,2]]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Scaffold to haplotypes
+#
+
+rule scaffold_haplotypes:
+    input:
+        query_fasta = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta",
+        query_fasta_fai = output_path / "assemblies/{sample_set}/haplotype_{haplotype}.fasta.fai",
+        reference_fasta = config["files"]["t2t_reference_path"],
+    output:
+        agp = temp(output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.agp"),
+        fasta = temp(output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.fasta"),
+        expanded_fasta = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta",
+        expanded_fai = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.fai",
+    threads: 16
+    resources:
+        mem_mb=50000,
+    run:
+        # To infer gaps: " -r -g 2 -m 100000000 "
+        output_directory = Path(output.fasta).parent
+        shell(
+            "{ragtag_path} scaffold {input.reference_fasta} {input.query_fasta}"
+            " -o {output_directory} "
+            " -u -w "            
+            " --aligner {minimap2_path} "
+            " -t {threads} "
+        )
+        with open(output.fasta, 'r') as infile:
+            with open(output.expanded_fasta, 'w') as outfile:
+                # Replace every occurrence of 100-30000 Ns (gap inserted by RagTag) or more by 30,000 exactly.
+                # This avoid read spanning consecutive contigs, but does not explode the expanded sequence.
+                outfile.write(re.sub(r'N{100,30000}', 'N'*30000, infile.read()))
+
+        shell(
+            "{samtools_path} faidx {output.expanded_fasta}"
+        )
+
+rule scaffold_haplotypes_final:
+    input:
+        fasta = [str(output_path / f"T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta.fai") \
+            for sample_set in sample_sets \
+            for haplotype in [1,2]]            
+
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Mapping to haplotypes
+#
+
+rule minimap2_to_haplotype:
+    input:
+        denovo_reference = output_path / "T2T_scaffolds/{sample_set}/haplotype_{haplotype}/ragtag.scaffold.expanded.fasta",
+        fastq_gz = lambda wildcards: flow_cell_to_path[wildcards.flow_cell],
+    output:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/T2T_scaffolds/haplotype_{haplotype}" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/T2T_scaffolds/haplotype_{haplotype}" \
+            / "minimap2.sorted.primary_alignments.bam.bai",            
+    threads: 32
+    retries: 3
+    resources:
+        mem_mb = lambda wildcards, attempt: [160000, 320000, 640000][attempt-1],
+    run:
+        # 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax map-hifi --cs=short --eqx --MD "
+            "{input.denovo_reference} "
+            "{input.fastq_gz} "
+            "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index -@ {threads} {output.bam}"
+        )
+        
+rule minimap2_to_haplotype_final:
+    input:
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/T2T_scaffolds/haplotype_{haplotype}" \
+            / "minimap2.sorted.primary_alignments.bam") \             
+            for haplotype in [1,2] \
+            for R in data_rows]
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Mapping to references
+#
+
+# T2T
+rule minimap2_to_T2T:
+    input:
+        reference = config["files"]["t2t_reference_path"],
+        fastq_gz = lambda wildcards: flow_cell_to_path[wildcards.flow_cell],
+    output:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/T2T_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/T2T_reference/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",            
+    threads: 32
+    retries: 3
+    resources:
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
+    run:
+        # 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax map-hifi --cs=short --eqx --MD "
+            "{input.reference} "
+            "{input.fastq_gz} "
+            "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index -@ {threads} {output.bam}"
+        )
+        
+rule minimap2_to_T2T_final:
+    input:
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/T2T_reference/" \
+            / "minimap2.sorted.primary_alignments.bam") \             
+            for haplotype in [1,2] \
+            for R in data_rows]
+
+# grch37
+rule minimap2_to_grch37:
+    input:
+        reference = config["files"]["grch37_reference_path"],
+        fastq_gz = lambda wildcards: flow_cell_to_path[wildcards.flow_cell],
+    output:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch37_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch37_reference/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",            
+    threads: 32
+    retries: 3
+    resources:
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
+    run:
+        # 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax map-hifi --cs=short --eqx --MD "
+            "{input.reference} "
+            "{input.fastq_gz} "
+            "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index -@ {threads} {output.bam}"
+        )
+        
+rule minimap2_to_grch37_final:
+    input:
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/grch37_reference/" \
+            / "minimap2.sorted.primary_alignments.bam") \             
+            for haplotype in [1,2] \
+            for R in data_rows]
+
+
+# grch38
+rule minimap2_to_grch38:
+    input:
+        reference = config["files"]["grch38_reference_path"],
+        fastq_gz = lambda wildcards: flow_cell_to_path[wildcards.flow_cell],
+    output:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",            
+    threads: 32
+    retries: 3
+    resources:
+        mem_mb = lambda wildcards, attempt: attempt * 50000,
+    run:
+        # 0x900 = SUPPLEMENTARY | SECONDARY (https://www.htslib.org/doc/samtools-flags.html)
+        shell(
+            "{minimap2_path} "
+            "-R \"@RG\\tID:{wildcards.sample_id}\\tPL:PACBIO\\tSM:{wildcards.sample_id}\\tPU:{wildcards.sample_id}\\tPM:SEQUEL\" "
+            "-t {threads} "
+            "-ax map-hifi --cs=short --eqx --MD "
+            "{input.reference} "
+            "{input.fastq_gz} "
+            "| {samtools_path} view -@ {threads} -bh -F 0x900 - "
+            "| {samtools_path} sort -@ {threads} -m 1G -o {output.bam}"
+        )
+
+        shell(
+            "{samtools_path} index -@ {threads} {output.bam}"
+        )
+        
+rule minimap2_to_grch38_final:
+    input:
+        [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/grch38_reference/" \
+            / "minimap2.sorted.primary_alignments.bam") \             
+            for haplotype in [1,2] \
+            for R in data_rows]               
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Extract reference starts from bams
+#
+
+rule extract_ref_starts_from_bam:
+    input:
+        bam = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{reference}/" \
+            / "minimap2.sorted.primary_alignments.bam",
+        bai = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{reference}/" \
+            / "minimap2.sorted.primary_alignments.bam.bai",
+    output:
+        csv = output_path / "alignments/{sample_set}/{sample_id}/{flow_cell}/{reference}/" \
+            / "minimap2.sorted.primary_alignments.ref_starts.csv.gz",
+    run:
+        shell(
+           "{samtools_path} view {input.bam} | awk '{{print $1 \",\" $3 \",\" $4}}' | gzip > {output.csv}"
+        )
+
+rule extract_ref_starts_from_bam_final:
+    input:
+        csv = [str(output_path / f"alignments/{R.sample_set}/{R.sample_id}/{R.flow_cell}/{reference}/" \
+            / "minimap2.sorted.primary_alignments.ref_starts.csv.gz") \
+            for reference in ["T2T_reference", "grch37_reference", "grch38_reference"]
+            for R in data_rows]

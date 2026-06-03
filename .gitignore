@@ -1,0 +1,10 @@
+__pycache__/
+logs/
+
+.snakemake
+.ipynb_checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+**/__pycache__/
+*.pyc
+.snakemake/

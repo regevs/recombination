@@ -1,0 +1,10 @@
+sample_set	fasta_wildcard_path
+PD48473b	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD48473b/PD48473b.asm.bp.hap{haplotype}.p_ctg.fasta
+PD50477f	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD50477f/PD50477f.asm.bp.hap{haplotype}.p_ctg.fasta
+PD50523b	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD50523b/PD50523b.asm.bp.hap{haplotype}.p_ctg.fasta
+PD50508b_PD50508f	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD50508bf/PD50508bf.asm.bp.hap{haplotype}.p_ctg.fasta
+PD50489e	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD50489e/PD50489e.asm.bp.hap{haplotype}.p_ctg.fasta
+PD50519d	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD50519d/PD50519d.asm.bp.hap{haplotype}.p_ctg.fasta
+PD50521b_PD50521e	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD50521be/PD50521be.asm.bp.hap{haplotype}.p_ctg.fasta
+PD46180c	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD46180c/PD46180c.asm.bp.hap{haplotype}.p_ctg.fasta
+PD47269d	/lustre/scratch122/tol/projects/sperm/data/Rahbari/hifiasm_0.19.5-r592_assemblies/PD47269d/PD47269d.asm.bp.hap{haplotype}.p_ctg.fasta
